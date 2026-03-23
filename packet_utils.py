@@ -29,6 +29,7 @@ def Sendpacket(sip, sporte, dip, dport, protocole):
     if protocole == "TCP":
         pkt = bytes(IP(dst=str(dip)) / TCP(dport=dport))
         with socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) as s:
+            s.bind(("0.0.0.0", 80))
             s.sendto(pkt, (sip, sporte))
     elif protocole == "UDP":
         pkt = bytes(IP(dst=str(dip)) / UDP(dport=dport))

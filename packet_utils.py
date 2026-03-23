@@ -1,4 +1,6 @@
-from scapy.layers.inet import IP
+import socket
+
+from scapy.layers.inet import IP, TCP, UDP
 
 
 def Unwraping(raw_payload):
@@ -14,3 +16,21 @@ def Unwraping(raw_payload):
         protocole = "UDP"
         return destination_ip, destination_port, protocole
     return None, None, "unknown"
+
+
+def Getservice(port, protocole):
+    try:
+        return socket.getservbyport(port, protocole.lower())
+    except (OSError, socket.error):
+        return f"Unknown ({port})"
+
+
+def Sendpacket(sip, sporte, dip, dport, protocole):
+    if protocole == "TCP":
+        pkt = bytes(IP(dst=str(dip)) / TCP(dport=dport))
+        with socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) as s:
+            s.sendto(pkt, (sip, sporte))
+    elif protocole == "UDP":
+        pkt = bytes(IP(dst=str(dip)) / UDP(dport=dport))
+        with socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) as s:
+            s.sendto(pkt, (sip, sporte))

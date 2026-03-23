@@ -1,6 +1,6 @@
 import socket
 
-from packet_utils import Unwraping
+from packet_utils import Getservice, Unwraping
 
 
 def StartServer(server_ip="0.0.0.0", port=5555):
@@ -17,8 +17,9 @@ def StartServer(server_ip="0.0.0.0", port=5555):
                 if sender:
                     print("received from " + str(sender[0]) + ":" + str(sender[1]))
                     destination_ip, destination_port, protocole = Unwraping(raw_payload)
+                    service = Getservice(sender[1], protocole)
                     print(
-                        f"Tunnel: {sender[0]} -> Targeting: {destination_ip}:{destination_port} via {protocole}"
+                        f"Tunnel: {sender[0]} -> Targeting: {destination_ip}:{destination_port} via {protocole} runnig : {service}"
                     )
             except socket.timeout:
                 continue

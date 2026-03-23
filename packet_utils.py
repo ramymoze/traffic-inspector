@@ -2,6 +2,8 @@ import socket
 
 from scapy.layers.inet import IP, TCP, UDP
 
+from crypto import encrypt
+
 
 def Unwraping(raw_payload):
     payload = IP(raw_payload)
@@ -28,10 +30,12 @@ def Getservice(port, protocole):
 def Sendpacket(sip, sporte, dip, dport, protocole):
     if protocole == "TCP":
         pkt = bytes(IP(dst=str(dip)) / TCP(dport=dport))
+        pkt = encrypt(pkt)
         with socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) as s:
             s.bind(("0.0.0.0", 80))
             s.sendto(pkt, (sip, sporte))
     elif protocole == "UDP":
         pkt = bytes(IP(dst=str(dip)) / UDP(dport=dport))
+        pkt = encrypt(pkt)
         with socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) as s:
             s.sendto(pkt, (sip, sporte))

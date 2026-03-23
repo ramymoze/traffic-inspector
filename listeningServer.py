@@ -1,5 +1,6 @@
 import socket
 
+from crypto import decrypt
 from packet_utils import Getservice, Unwraping
 
 
@@ -16,6 +17,7 @@ def StartServer(server_ip="0.0.0.0", port=5555):
                 raw_payload, sender = UdpserverSocket.recvfrom(buffer)
                 if sender:
                     print("received from " + str(sender[0]) + ":" + str(sender[1]))
+                    raw_payload = decrypt(raw_payload)
                     destination_ip, destination_port, protocole = Unwraping(raw_payload)
                     service = Getservice(sender[1], protocole)
                     print(

@@ -62,28 +62,43 @@ The master key is created automatically in `.env` the first time the server
 runs.  **It is a secret**: anybody who has it can use your tunnel.  The file
 is already in `.gitignore`.
 
-## The client
+## The clients
 
-The client side has five parts:
+| Client | What it is | State |
+|---|---|---|
+| `client/bridge.py` | the TCP bridge of the desktop client | done |
+| `client/tun_linux.py` | the TUN device of Linux, the routes, the resolver | done |
+| `client/main.py` | the command line client for Linux | done |
+| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel | done |
+| `client/android` | the app for a phone: React Native in front, Kotlin behind | in progress |
 
-| File | What it does |
-|---|---|
-| `client/tunnel.py` | the handshake, the flow bookkeeping and the frame codec |
-| `client/bridge.py` | the TCP bridge: it terminates the TCP connection of the local kernel and proxies it through the tunnel |
-| `client/ipstack.py` | a small IPv4/TCP codec |
-| `client/tun_linux.py` | the TUN device of Linux, the routes and the resolver |
-| `client/main.py` | the command line client |
-| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel |
+### The Android app
 
-The bridge is the part that makes a device a real VPN client: it reads the
-IP packets of the kernel, keeps the sequence numbers of both sides straight
-and hands the payload to the tunnel.  Only the payload crosses the tunnel,
-never the sequence numbers.
+The phone is the device of the original story.  The user interface is React
+Native, the tunnel is Kotlin:
 
-It is written against plain IP packets, so it works with a TUN device, with
-a test harness or with a script - which is how it is tested.
+```
+client/android/
+├── src/                    the user interface (React Native)
+│   ├── native/Tunnel.ts    the typed wrapper around the native module
+│   └── screens/ConnectScreen.tsx
+└── android/app/src/main/java/com/trafficinspector/
+    ├── tunnel/             the tunnel, no react native in here
+    │   ├── IpStack.kt      the IPv4 / TCP codec
+    │   ├── TunnelClient.kt the frames, the handshake, AES-256-GCM
+    │   ├── TcpBridge.kt    the TCP state machine
+    │   └── TunnelService.kt the VpnService
+    └── react/              the bridge to the user interface
+```
 
-### Run it on Linux
+The Android kernel is the client of every TCP connection and the app plays
+the server side of it, exactly like the desktop client.  Only the payload
+goes through the tunnel.
+
+See **[client/android/README.md](client/android/README.md)** for the build
+and the use.
+
+## The Linux client
 
 ```bash
 # on the server

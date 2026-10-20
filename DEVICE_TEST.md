@@ -189,6 +189,30 @@ tail -f traffic.csv                  # Linux / macOS
 
 ---
 
+## With the Android app
+
+The app in `client/android` is the real thing: it turns the phone into a
+client of the tunnel and the whole traffic of the device goes through your
+server.  The build and the use are in
+**[client/android/README.md](client/android/README.md)**.
+
+In short:
+
+```bash
+# on the server
+python listeningServer.py --port 5555 --csv traffic.csv
+
+# build the app
+cd client/android/android
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+In the app: the address of the server, the port, the master key and a name
+for the device (`pixel8-android`).  Then *start the tunnel* and let the
+system ask for the permission.  After that the flows show up in the app and
+in the CSV of the server, and the name of the device tells them apart.
+
 ## Beyond the local network
 
 On the same Wi-Fi nothing else is needed.  To test from mobile data or from

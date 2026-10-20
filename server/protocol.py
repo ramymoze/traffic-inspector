@@ -108,6 +108,60 @@ class ProtocolError(Exception):
     """Raised when a frame cannot be parsed or is malformed."""
 
 
+# --- the HELLO payload ----------------------------------------------------
+HELLO_ID_LEN = 8
+HELLO_NONCE_LEN = 8
+HELLO_PROOF_LEN = 16
+HELLO_MIN_LEN = HELLO_ID_LEN + HELLO_NONCE_LEN + HELLO_PROOF_LEN
+
+#: The longest device label a client may send.
+LABEL_MAX = 255
+
+
+def encode_label(label):
+    """Encode a device label: one length byte and the name."""
+    if not label:
+        return b"\x00"
+    raw = str(label).encode("utf-8")[:LABEL_MAX]
+    return bytes([len(raw)]) + raw
+
+
+def decode_label(payload, offset=0):
+    """Decode a device label.  Returns ``(label, next_offset)``."""
+    if offset >= len(payload):
+        return "", offset
+    length = payload[offset]
+    offset += 1
+    raw = payload[offset:offset + length]
+    return raw.decode("utf-8", "replace"), offset + length
+
+
+def build_hello(client_id, client_nonce, proof, label=""):
+    """Build the payload of a HELLO frame."""
+    if len(client_id) != HELLO_ID_LEN or len(client_nonce) != HELLO_NONCE_LEN:
+        raise ProtocolError("the client id and the nonce must be %d bytes" % HELLO_ID_LEN)
+    if len(proof) != HELLO_PROOF_LEN:
+        raise ProtocolError("the proof must be %d bytes" % HELLO_PROOF_LEN)
+    return client_id + client_nonce + proof + encode_label(label)
+
+
+def parse_hello(payload):
+    """Parse the payload of a HELLO frame.
+
+    Returns ``(client_id, client_nonce, proof, label)``.  The label is only
+    a name the client gives itself, the server cannot verify it.
+    """
+    if len(payload) < HELLO_MIN_LEN:
+        raise ProtocolError("short HELLO payload")
+    client_id = payload[:HELLO_ID_LEN]
+    client_nonce = payload[HELLO_ID_LEN:HELLO_ID_LEN + HELLO_NONCE_LEN]
+    proof = payload[
+        HELLO_ID_LEN + HELLO_NONCE_LEN:HELLO_ID_LEN + HELLO_NONCE_LEN + HELLO_PROOF_LEN
+    ]
+    label, _ = decode_label(payload, HELLO_MIN_LEN)
+    return client_id, client_nonce, proof, label
+
+
 def type_name(ftype):
     return TYPE_NAMES.get(ftype, "UNKNOWN(0x%02x)" % ftype)
 

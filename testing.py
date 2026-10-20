@@ -44,6 +44,11 @@ def parse_args(argv=None):
     )
     parser.add_argument("--src-port", type=int, default=0, help="source port to report")
     parser.add_argument("--key-file", default=None, help="file holding the master key")
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="the name the server shows for this device (default: the system and the hostname)",
+    )
     return parser.parse_args(argv)
 
 
@@ -64,7 +69,7 @@ def main(argv=None):
     args = parse_args(argv)
     master = load_master_key(args.key_file)
 
-    client = TunnelClient((args.server, args.server_port), master)
+    client = TunnelClient((args.server, args.server_port), master, device=args.device)
     try:
         client.handshake()
     except (TunnelError, OSError) as exc:

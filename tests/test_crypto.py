@@ -113,3 +113,14 @@ def test_handshake_frame_is_sealed_with_the_master_key():
     assert got_header == header
     with pytest.raises(CryptoError):
         unseal_with_master(bytes(32), wire)
+
+
+def test_the_device_label_is_authenticated():
+    """The label travels inside the sealed frame, so it cannot be changed."""
+    master = bytes(range(32))
+    payload = proto.build_hello(b"c" * 8, b"n" * 8, b"p" * 16, "pixel8-android")
+    header = proto.build_header(proto.HELLO, 0, len(payload))
+    wire = bytearray(seal_with_master(master, header, payload))
+    wire[-1] ^= 0x01  # change the last letter of the label
+    with pytest.raises(CryptoError):
+        unseal_with_master(master, bytes(wire))

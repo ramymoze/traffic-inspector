@@ -110,6 +110,32 @@ def report(rows, args):
     print()
 
     # -- destinations -----------------------------------------------------
+    print("-- devices -------------------------------------------------------")
+    by_device = defaultdict(lambda: [0, 0, 0, "", ""])
+    for row in rows:
+        device = row.get("device") or "(unnamed)"
+        entry = by_device[device]
+        entry[0] += as_int(row["bytes_down"]) + as_int(row["bytes_up"])
+        entry[1] += 1
+        entry[2] += as_int(row["bytes_up"])
+        start = row.get("ts_start") or ""
+        end = row.get("ts_end") or ""
+        if start and (not entry[3] or start < entry[3]):
+            entry[3] = start
+        if end > entry[4]:
+            entry[4] = end
+    if by_device:
+        for device, (size, count, up, start, end) in sorted(
+            by_device.items(), key=lambda kv: -kv[1][0]
+        ):
+            print(
+                "  %-30s %4d flow(s)  %-10s  up %-10s  %s -> %s"
+                % (device[:30], count, human(size), human(up),
+                   (start or "?")[:19], (end or "still open")[:19])
+            )
+    print()
+
+    # -- destinations -----------------------------------------------------
     print("-- destinations ------------------------------------------------")
     by_dest = defaultdict(lambda: [0, 0, 0])
     for row in rows:
@@ -176,9 +202,10 @@ def report(rows, args):
             args.quiet_start, args.quiet_end))
         for row in sorted(quiet, key=lambda r: r.get("time_of_day") or "")[:20]:
             print(
-                "  %s  %s -> %s:%s  %s  up %s / down %s  (%s s)"
+                "  %s  %-16s %s -> %s:%s  %s  up %s / down %s  (%s s)"
                 % (
                     row.get("time_of_day"),
+                    (row.get("device") or "?")[:16],
                     row.get("src_ip") or row.get("tunnel_src"),
                     row.get("dst_ip"),
                     row.get("dst_port"),

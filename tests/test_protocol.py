@@ -62,3 +62,35 @@ def test_open_payload_rejects_truncated_data():
     payload = proto.build_open(proto.IPPROTO_TCP, "10.8.0.2", 1234, "1.2.3.4", 80)
     with pytest.raises(proto.ProtocolError):
         proto.decode_open(payload[:5])
+
+
+def test_a_device_label_survives_the_round_trip():
+    payload = proto.build_hello(b"c" * 8, b"n" * 8, b"p" * 16, "pixel8-android")
+    client_id, client_nonce, proof, label = proto.parse_hello(payload)
+    assert client_id == b"c" * 8
+    assert client_nonce == b"n" * 8
+    assert proof == b"p" * 16
+    assert label == "pixel8-android"
+
+
+def test_a_hello_without_a_label_is_allowed():
+    payload = proto.build_hello(b"c" * 8, b"n" * 8, b"p" * 16, "")
+    _client_id, _nonce, _proof, label = proto.parse_hello(payload)
+    assert label == ""
+
+
+def test_a_label_with_odd_characters_is_kept():
+    payload = proto.build_hello(b"c" * 8, b"n" * 8, b"p" * 16, "tél-phone-1")
+    _client_id, _nonce, _proof, label = proto.parse_hello(payload)
+    assert label == "tél-phone-1"
+
+
+def test_a_too_long_label_is_cut():
+    payload = proto.build_hello(b"c" * 8, b"n" * 8, b"p" * 16, "x" * 400)
+    _client_id, _nonce, _proof, label = proto.parse_hello(payload)
+    assert len(label) == proto.LABEL_MAX
+
+
+def test_a_short_hello_is_rejected():
+    with pytest.raises(proto.ProtocolError):
+        proto.parse_hello(b"too short")

@@ -6,6 +6,7 @@ stub client (``testing.py``), by the SOCKS5 proxy (``client.socks``) and,
 later on, by the TUN based clients that will live in this package.
 """
 
+import platform
 import secrets
 import socket
 import struct
@@ -30,6 +31,21 @@ PROOF_LEN = 16
 
 class TunnelError(Exception):
     """Raised when the tunnel misbehaves."""
+
+
+def default_device():
+    """A name for this device, so the server can tell them apart.
+
+    The server sees the name in the inspector, which is what makes it
+    possible to follow one device over time.  It is only a name, nothing
+    else is sent.
+    """
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = "unknown"
+    system = (platform.system() or "unknown").lower()
+    return ("%s-%s" % (system, host))[:60]
 
 
 class RemoteFlow:
@@ -128,7 +144,7 @@ class RemoteFlow:
 class TunnelClient:
     """A UDP client for the tunnel server."""
 
-    def __init__(self, server_addr, master_key, timeout=10.0):
+    def __init__(self, server_addr, master_key, timeout=10.0, device=None):
         self.server_addr = server_addr
         self.master = master_key
         self.timeout = timeout
@@ -136,6 +152,8 @@ class TunnelClient:
         self.sock.settimeout(timeout)
         self.client_id = secrets.token_bytes(CLIENT_ID_LEN)
         self.client_nonce = secrets.token_bytes(NONCE_LEN)
+        #: the name the server shows for this device
+        self.device = default_device() if device is None else str(device)
         self.crypto = None
         self.server_id = None
         self.server_nonce = None
@@ -150,7 +168,7 @@ class TunnelClient:
     # -- handshake ----------------------------------------------------------
     def handshake(self):
         proof = hello_proof(self.master, self.client_id, self.client_nonce)
-        payload = self.client_id + self.client_nonce + proof
+        payload = proto.build_hello(self.client_id, self.client_nonce, proof, self.device)
         header = proto.build_header(proto.HELLO, 0, len(payload))
         self.sock.sendto(seal_with_master(self.master, header, payload), self.server_addr)
 

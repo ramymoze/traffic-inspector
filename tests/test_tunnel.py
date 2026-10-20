@@ -28,6 +28,33 @@ def test_handshake_succeeds(server, master):
     client.close()
 
 
+def test_the_server_learns_the_name_of_the_device(server, master):
+    client = TunnelClient(("127.0.0.1", server.udp.getsockname()[1]), master,
+                           device="pixel8-android")
+    client.handshake()
+    client.pump(timeout=0.3)
+
+    sessions = list(server.sessions.values())
+    assert sessions, "the server did not accept the client"
+    assert sessions[0].device == "pixel8-android"
+    client.close()
+
+
+def test_the_device_ends_up_in_the_inspector(server, master):
+    client = TunnelClient(("127.0.0.1", server.udp.getsockname()[1]), master,
+                           device="laptop-linux")
+    client.handshake()
+    client.pump(timeout=0.3)
+
+    client.open_flow("127.0.0.1", 9, src_ip="10.8.0.2", src_port=1234)
+    client.pump(timeout=0.3)
+
+    rows = server.inspector.rows()
+    assert rows, "the flow was not recorded"
+    assert rows[0]["device"] == "laptop-linux"
+    client.close()
+
+
 def test_two_flows_to_two_destinations_stay_separate(server, master, echo_server):
     """The v1 server kept one socket per client, so the second destination
     could never be reached.  Every flow must own its own socket."""

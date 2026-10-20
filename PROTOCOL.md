@@ -45,7 +45,7 @@ MTU.
 
 | Value | Name | Direction | Payload |
 |---|---|---|---|
-| `0x00` | `HELLO` | client -> server | `client id (8) || client nonce (8) || proof (16)` |
+| `0x00` | `HELLO` | client -> server | `client id (8) || client nonce (8) || proof (16) || device label` |
 | `0x01` | `HELLO_ACK` | server -> client | `server id (8) || server nonce (8) || proof (16)` |
 | `0x02` | `OPEN` | client -> server | see below |
 | `0x03` | `OPEN_OK` | server -> client | `status (1)` |
@@ -53,6 +53,17 @@ MTU.
 | `0x05` | `CLOSE` | both | `reason (1)` |
 | `0x06` | `PING` | both | empty |
 | `0x07` | `PONG` | both | empty |
+
+### The device label
+
+The `HELLO` frame ends with the name the client gives itself: one length
+byte and up to 255 bytes of UTF-8, for example `pixel8-android` or
+`laptop-linux`.  The server shows it in the inspector, which is what makes
+it possible to follow one device over time - the `client id` is random and
+changes with every connection.
+
+The label is only a name.  The server cannot verify it, but it cannot be
+changed in flight either, because it travels inside the sealed frame.
 
 ### OPEN payload
 

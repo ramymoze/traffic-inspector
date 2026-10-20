@@ -9,6 +9,7 @@ class FakeFlow:
         self.started_at = kwargs.get("started_at", 1700000000.0)
         self.ended_at = kwargs.get("ended_at")
         self.client_id = kwargs.get("client_id", "abc123")
+        self.device = kwargs.get("device", "pixel8-android")
         self.tunnel_src = kwargs.get("tunnel_src", "203.0.113.9")
         self.tunnel_src_port = kwargs.get("tunnel_src_port", 51234)
         self.src_ip = kwargs.get("src_ip", "10.8.0.2")
@@ -49,6 +50,7 @@ def test_the_csv_has_the_expected_columns(tmp_path):
     assert row["dst_port"] == "443"
     assert row["src_ip"] == "10.8.0.2"
     assert row["service"] == "https"
+    assert row["device"] == "pixel8-android"
     assert row["bytes_up"] == "120"
     assert row["bytes_down"] == "4096"
     assert row["state"] == "active"

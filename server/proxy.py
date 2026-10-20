@@ -57,6 +57,7 @@ class Flow:
         self.key = (session.addr, flow_id)
         self.session = session
         self.client_id = session.client_id.hex()
+        self.device = session.device
         self.tunnel_src = session.addr[0]
         self.tunnel_src_port = session.addr[1]
 

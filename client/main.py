@@ -42,6 +42,11 @@ def parse_args(argv=None):
     parser.add_argument("--mss", type=int, default=1160, help="maximum segment size")
     parser.add_argument("--key-file", default=None, help="file holding the master key")
     parser.add_argument(
+        "--device",
+        default=None,
+        help="the name the server shows for this device (default: the system and the hostname)",
+    )
+    parser.add_argument(
         "--no-setup", action="store_true", help="do not touch the routes or the resolver"
     )
     parser.add_argument(
@@ -66,7 +71,7 @@ def main(argv=None):
         print("Cannot read the master key: %s" % exc, file=sys.stderr)
         return 1
 
-    client = TunnelClient((args.server, args.port), master)
+    client = TunnelClient((args.server, args.port), master, device=args.device)
     try:
         client.handshake()
     except (TunnelError, OSError) as exc:

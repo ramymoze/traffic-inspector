@@ -36,17 +36,17 @@ from .inspector import Inspector
 from .proxy import Proxy, _would_block
 
 NONCE_LEN = 8
-PROOF_LEN = 16
-HELLO_LEN = CLIENT_ID_LEN + NONCE_LEN + PROOF_LEN
 
 
 class ClientSession:
     """One connected client."""
 
-    def __init__(self, addr, client_id, server_id, key):
+    def __init__(self, addr, client_id, server_id, key, device=""):
         self.addr = addr
         self.client_id = client_id
         self.server_id = server_id
+        #: the name the client gave itself, shown in the inspector
+        self.device = device
         self.crypto = SessionCrypto(key, send_id=server_id, recv_id=client_id)
         self.created = time.time()
         self.last_seen = time.time()
@@ -200,11 +200,7 @@ class TunnelServer:
         return parsed["type"], parsed["flags"], parsed["flow_id"], payload
 
     def _create_session(self, addr, payload):
-        if len(payload) < HELLO_LEN:
-            raise proto.ProtocolError("short HELLO payload")
-        client_id = payload[:CLIENT_ID_LEN]
-        client_nonce = payload[CLIENT_ID_LEN:CLIENT_ID_LEN + NONCE_LEN]
-        proof = payload[CLIENT_ID_LEN + NONCE_LEN:HELLO_LEN]
+        client_id, client_nonce, proof, device = proto.parse_hello(payload)
         if not hmac.compare_digest(hello_proof(self.master, client_id, client_nonce), proof):
             raise CryptoError("invalid HELLO proof")
 
@@ -212,7 +208,7 @@ class TunnelServer:
         server_nonce = secrets.token_bytes(NONCE_LEN)
         key = derive_session_key(self.master, client_id, server_id, client_nonce, server_nonce)
 
-        session = ClientSession(addr, client_id, server_id, key)
+        session = ClientSession(addr, client_id, server_id, key, device=device)
         self.sessions[addr] = session
 
         ack = (
@@ -223,7 +219,8 @@ class TunnelServer:
         header = proto.build_header(proto.HELLO_ACK, 0, len(ack))
         self._send_datagram(addr, seal_with_master(self.master, header, ack))
         logs.ok(
-            "Client connected: %s:%d (session %s)" % (addr[0], addr[1], client_id.hex())
+            "Client connected: %s:%d (session %s%s)"
+            % (addr[0], addr[1], client_id.hex(), ", device %s" % device if device else "")
         )
 
     def _dispatch(self, addr, ftype, flags, flow_id, payload):

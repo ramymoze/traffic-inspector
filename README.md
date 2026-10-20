@@ -119,6 +119,12 @@ Everything the browser does then travels through the tunnel and shows up in
 `traffic.csv`.  The full walkthrough, including how to reach the server from
 mobile data and a troubleshooting table, is in **[DEVICE_TEST.md](DEVICE_TEST.md)**.
 
+Each client names itself, so the report can tell the devices apart:
+
+```bash
+python -m client.socks --server <address of the server> --port 5555 --device pixel8-android
+```
+
 ## Drive it with the stub client
 
 ```bash
@@ -143,15 +149,16 @@ The server prints something like:
 and the CSV gets one row:
 
 ```
-flow_id,ts_start,ts_end,time_of_day,duration_s,client_id,tunnel_src,tunnel_src_port,src_ip,src_port,dst_ip,dst_port,dst_name,proto,service,bytes_up,bytes_down,state,note
-1,2026-10-20T04:22:29+02:00,,04:22:29,0.256,59762bd684aeb3a1,127.0.0.1,54333,10.8.0.2,52344,142.251.150.119,80,www.google.com,TCP,http,71,88216,closed,
+flow_id,ts_start,ts_end,time_of_day,duration_s,client_id,device,tunnel_src,tunnel_src_port,src_ip,src_port,dst_ip,dst_port,dst_name,proto,service,bytes_up,bytes_down,state,note
+1,2026-10-20T04:22:29+02:00,,04:22:29,0.256,59762bd684aeb3a1,linux-ti-vm,127.0.0.1,54333,10.8.0.2,52344,142.251.150.119,80,www.google.com,TCP,http,71,88216,closed,
 ```
 
 | Column | Meaning |
 |---|---|
 | `ts_start` / `ts_end` | ISO timestamps, empty while the flow is alive |
 | `time_of_day` | local `HH:MM:SS` - the column that answers *"it happened at 2am"* |
-| `client_id` | the session the flow belongs to |
+| `client_id` | the session the flow belongs to, random and different for every connection |
+| `device` | the name the client gave itself, so one device can be followed over time |
 | `tunnel_src` | the public address of the device |
 | `src_ip` / `src_port` | the address the destination actually saw |
 | `dst_ip` / `dst_port` | the destination |
@@ -161,6 +168,9 @@ flow_id,ts_start,ts_end,time_of_day,duration_s,client_id,tunnel_src,tunnel_src_p
 | `bytes_down` | internet -> device |
 | `state` | `connecting`, `active`, `closed` or `error` |
 | `note` | why the flow was closed, when there is a reason |
+
+The name of the device is set with `--device` and defaults to the system and
+the hostname, for example `linux-ti-vm` or `windows-desktop`:
 
 The file is rewritten atomically about once a second, so it is safe to read
 while the server runs.

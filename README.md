@@ -64,14 +64,16 @@ is already in `.gitignore`.
 
 ## The client
 
-The client side has three parts:
+The client side has five parts:
 
 | File | What it does |
 |---|---|
 | `client/tunnel.py` | the handshake, the flow bookkeeping and the frame codec |
 | `client/bridge.py` | the TCP bridge: it terminates the TCP connection of the local kernel and proxies it through the tunnel |
-| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel |
 | `client/ipstack.py` | a small IPv4/TCP codec |
+| `client/tun_linux.py` | the TUN device of Linux, the routes and the resolver |
+| `client/main.py` | the command line client |
+| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel |
 
 The bridge is the part that makes a device a real VPN client: it reads the
 IP packets of the kernel, keeps the sequence numbers of both sides straight
@@ -79,7 +81,22 @@ and hands the payload to the tunnel.  Only the payload crosses the tunnel,
 never the sequence numbers.
 
 It is written against plain IP packets, so it works with a TUN device, with
-a test harness or with a script - which is how it is tested today.
+a test harness or with a script - which is how it is tested.
+
+### Run it on Linux
+
+```bash
+# on the server
+python listeningServer.py --port 5555 --csv traffic.csv
+
+# on the device, as root: it needs the interface and the routes
+sudo python -m client.main --server <the address of the server> --port 5555 \
+     --tun ti0 --address 10.8.0.1/24 --dns 8.8.8.8
+```
+
+Everything the machine sends now goes through the tunnel and shows up in
+`traffic.csv`.  The setup of the test machine is in
+**[tools/VM_SETUP.md](tools/VM_SETUP.md)**.
 
 ## Test it with a real device
 

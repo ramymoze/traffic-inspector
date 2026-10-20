@@ -67,12 +67,16 @@ class TunnelServer:
         csv_path="traffic.csv",
         key_file=None,
         level="verbose",
-        max_flows=512,
+        max_flows=2048,
         session_timeout=300.0,
     ):
         logs.configure(level)
         self.host = host
         self.port = port
+        #: the address the tunnel listens on.  The flows are bound to it as
+        #: well, so the traffic of the server does not accidentally take a
+        #: route that leads back into the tunnel.
+        self.bind_host = host
         self.master = load_master_key(key_file)
         self.inspector = Inspector(csv_path)
         self.proxy = Proxy(self, max_flows=max_flows)
@@ -395,7 +399,7 @@ def main(argv=None):
         choices=["quiet", "normal", "verbose"],
         help="terminal verbosity (default verbose)",
     )
-    parser.add_argument("--max-flows", type=int, default=512, help="maximum simultaneous flows")
+    parser.add_argument("--max-flows", type=int, default=2048, help="maximum simultaneous flows")
     parser.add_argument(
         "--session-timeout",
         type=float,

@@ -102,7 +102,7 @@ class Flow:
 class Proxy:
     """Creates, feeds and tears down flows."""
 
-    def __init__(self, server, max_flows=512):
+    def __init__(self, server, max_flows=2048):
         self.server = server
         self.flows = {}
         self.max_flows = max_flows
@@ -139,6 +139,15 @@ class Proxy:
 
         try:
             sock = socket.socket(family, socktype)
+            bind_host = getattr(self.server, "bind_host", "")
+            if bind_host and bind_host not in ("0.0.0.0", "::", ""):
+                # Use the same address as the tunnel itself.  Otherwise the
+                # kernel picks the source address by the route it finds, and
+                # that route may lead straight back into the tunnel.
+                try:
+                    sock.bind((bind_host, 0))
+                except OSError:
+                    pass  # wrong family, the route has to do
             sock.setblocking(False)
             if params["protocol"] == proto.IPPROTO_TCP:
                 try:

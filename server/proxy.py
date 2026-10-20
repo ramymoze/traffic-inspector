@@ -26,6 +26,15 @@ _BLOCKING_WINERRORS = {10035, 10037, 10057, 10060}
 
 MAX_SOCKET_READ = 65536
 
+#: The tunnel carries at most 1200 bytes of payload per frame, so the
+#: segments of the connection to the destination must stay below that or the
+#: destination would have to reassemble them.
+TUNNEL_MSS = 1160
+
+#: How much data may pile up between the client and the destination before
+#: the server stops reading.  It is the back pressure of the tunnel.
+MAX_PENDING = 256 * 1024
+
 
 def _would_block(exc):
     """True when the error only means "try again later"."""
@@ -71,6 +80,8 @@ class Flow:
         self.pending = b""  # bytes still to be written to the internet socket
         self.dgram_buf = b""  # partially received UDP datagram
         self.want_write = False
+        self.closing = False  # the client is done sending
+        self.close_deadline = None
 
     @property
     def label(self):
@@ -130,6 +141,10 @@ class Proxy:
             sock = socket.socket(family, socktype)
             sock.setblocking(False)
             if params["protocol"] == proto.IPPROTO_TCP:
+                try:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG, TUNNEL_MSS)
+                except OSError:
+                    pass  # not supported everywhere
                 result = sock.connect_ex(sockaddr)
                 if result not in (0, errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EALREADY):
                     sock.close()
@@ -228,12 +243,19 @@ class Proxy:
             flow.bytes_up += sent
             logs.detail("Payload sent to %s:%s (%d bytes)" % (flow.dst_ip, flow.dst_port, sent))
             self.server.inspector.upsert(flow)
+            if flow.pending and len(flow.pending) < MAX_PENDING:
+                self.server.want_read(flow)
         if flow.pending:
             self.server.want_write(flow)
 
     # -- internet -> client ------------------------------------------------
     def on_socket_readable(self, flow):
         if flow.sock is None:
+            return
+        if len(flow.pending) >= MAX_PENDING:
+            # the client is not keeping up, stop reading until the buffer
+            # drained.  This is the back pressure of the tunnel.
+            self.server.clear_read(flow)
             return
         try:
             data = flow.sock.recv(MAX_SOCKET_READ)
@@ -300,7 +322,24 @@ class Proxy:
 
     def on_close(self, flow, payload=b""):
         reason = payload[0] if payload else proto.CLOSE_NORMAL
+        if flow.proto == proto.IPPROTO_TCP and flow.sock is not None and not flow.closing:
+            # The client will not send anything more, but the destination may
+            # still have data for us.  Half close and wait for the other side.
+            try:
+                flow.sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            flow.closing = True
+            flow.close_deadline = time.time() + 30
+            return
         self.close_flow(flow, reason, "closed")
+
+    def expire_closing(self):
+        """Close the flows whose destination never said goodbye."""
+        now = time.time()
+        for flow in list(self.flows.values()):
+            if flow.close_deadline is not None and now > flow.close_deadline:
+                self.close_flow(flow, proto.CLOSE_TIMEOUT, "closed", "the destination hung up late")
 
     def close_flow(self, flow, reason=proto.CLOSE_NORMAL, state="closed", note=""):
         if flow.key not in self.flows:

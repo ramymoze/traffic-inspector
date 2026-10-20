@@ -111,6 +111,7 @@ class TunnelServer:
                             self.proxy.on_socket_writable(flow)
                 self.inspector.maybe_write()
                 self._expire_sessions()
+                self.proxy.expire_closing()
         except KeyboardInterrupt:
             logs.warn("Shutdown signal received. Closing all sockets.")
         except Exception as exc:  # pragma: no cover - safety net
@@ -330,6 +331,30 @@ class TunnelServer:
         if not key.events & selectors.EVENT_WRITE:
             self.selector.modify(
                 flow.sock, key.events | selectors.EVENT_WRITE, key.data
+            )
+
+    def want_read(self, flow):
+        if flow.sock is None:
+            return
+        try:
+            key = self.selector.get_key(flow.sock)
+        except KeyError:
+            return
+        if not key.events & selectors.EVENT_READ:
+            self.selector.modify(
+                flow.sock, key.events | selectors.EVENT_READ, key.data
+            )
+
+    def clear_read(self, flow):
+        if flow.sock is None:
+            return
+        try:
+            key = self.selector.get_key(flow.sock)
+        except KeyError:
+            return
+        if key.events & selectors.EVENT_READ:
+            self.selector.modify(
+                flow.sock, key.events & ~selectors.EVENT_READ, key.data
             )
 
     def clear_write(self, flow):

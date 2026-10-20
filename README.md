@@ -62,6 +62,25 @@ The master key is created automatically in `.env` the first time the server
 runs.  **It is a secret**: anybody who has it can use your tunnel.  The file
 is already in `.gitignore`.
 
+## The client
+
+The client side has three parts:
+
+| File | What it does |
+|---|---|
+| `client/tunnel.py` | the handshake, the flow bookkeeping and the frame codec |
+| `client/bridge.py` | the TCP bridge: it terminates the TCP connection of the local kernel and proxies it through the tunnel |
+| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel |
+| `client/ipstack.py` | a small IPv4/TCP codec |
+
+The bridge is the part that makes a device a real VPN client: it reads the
+IP packets of the kernel, keeps the sequence numbers of both sides straight
+and hands the payload to the tunnel.  Only the payload crosses the tunnel,
+never the sequence numbers.
+
+It is written against plain IP packets, so it works with a TUN device, with
+a test harness or with a script - which is how it is tested today.
+
 ## Test it with a real device
 
 One command starts the server, prints what your device needs, waits for the
@@ -160,9 +179,9 @@ README.md      this file
 
 ## What is next
 
-* **Phase 2** - the desktop client: a TUN device plus a TCP bridge, so a
-  browser really goes through the tunnel.  This is the risky part, the
-  server is done and the client has to speak TCP.
+* **Phase 2** - the desktop client: the TUN device itself (read and write IP
+  packets, routes, DNS rewrite) and the command line client around it.  The
+  TCP bridge, which is the hard part, is done and tested.
 * **Phase 3** - the Android client, a Kotlin `VpnService` application.
 * **Phase 4** - more analysis on top of the CSV.
 

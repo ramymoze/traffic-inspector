@@ -1,15 +1,21 @@
-"""Turn the inspector CSV into an answer instead of a table.
+"""Turn the inspector CSV into a verdict.
 
     python tools/analyze.py --csv traffic.csv
 
-The report is built around the two things that were interesting in the
-original story: a connection to an unknown destination on an odd port, and a
-sustained upload that happens in the middle of the night.
+The report answers the two questions the whole project is about:
 
-With ``--baseline`` the destinations and ports of an older file are the
-reference, so only what is *new* is reported:
+  * is a device talking to somewhere it should not?  (a new destination, a
+    port that is not a normal service)
+  * is a device sending something it should not?  (a stream that never
+    stops, in the middle of the night)
 
-    python tools/analyze.py --csv traffic.csv --baseline traffic-last-week.csv
+Everything else - the destinations, the ports, the hour of the day - is
+printed below the verdict, for when you want to look at the details.
+
+With ``--baseline`` the file of an earlier day is the reference, so only what
+is *new* is reported:
+
+    python tools/analyze.py --csv traffic.csv --baseline yesterday.csv
 """
 
 import argparse
@@ -17,22 +23,24 @@ import csv
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server.inspector import FIELDS  # noqa: E402
 
-#: Ports of the services that are normal.  Everything else is worth a look.
+#: Ports of the services that are normal for a phone.
 KNOWN_PORTS = {
     20, 21, 22, 23, 25, 53, 67, 68, 69, 80, 110, 119, 123, 135, 137, 138, 139, 143,
-    161, 162, 179, 194, 389, 443, 445, 465, 514, 546, 547, 587, 631, 636, 993, 995,
+    161, 162, 179, 194, 389, 443, 465, 514, 546, 547, 587, 631, 636, 993, 995,
     1080, 1433, 1434, 1521, 1723, 2049, 3128, 3306, 3389, 5000, 5432, 5900, 6379,
     8080, 8443, 8888, 9000, 9090, 27017, 28017,
 }
 
-#: A port above this is unusual for a phone.
-HIGH_PORT = 1024
+#: Ports a phone has no reason to use.
+HIGH_PORT = 40000
+
+SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
 class Finding:
@@ -40,47 +48,37 @@ class Finding:
 
     def __init__(self, kind, severity, title, detail=""):
         self.kind = kind
-        self.severity = severity  # "high", "medium", "low"
+        self.severity = severity
         self.title = title
         self.detail = detail
 
 
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="analyse a traffic-inspector CSV file")
-    parser.add_argument("--csv", default="traffic.csv", help="CSV file to read")
-    parser.add_argument(
-        "--baseline",
-        default=None,
-        help="an older CSV, only what is new compared to it is reported",
-    )
-    parser.add_argument(
-        "--quiet-start", type=int, default=0, help="first hour of the quiet period (default 0)"
-    )
-    parser.add_argument(
-        "--quiet-end", type=int, default=5, help="hour after the quiet period (default 5)"
-    )
-    parser.add_argument(
-        "--upload-mb", type=float, default=5.0, help="upload size that counts as a stream"
-    )
-    parser.add_argument(
-        "--upload-seconds", type=float, default=60.0, help="minimum duration of a stream"
-    )
-    parser.add_argument(
-        "--quiet-mb", type=float, default=0.0, help="bytes in the quiet hours that are reported"
-    )
-    return parser.parse_args(argv)
+# -- helpers ----------------------------------------------------------------
+def human(size):
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return "%.1f %s" % (value, unit)
+        value /= 1024
+    return "%.1f TB" % value
 
 
-def load(path):
-    rows = []
-    with open(path, newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        missing = set(FIELDS) - set(reader.fieldnames or [])
-        if missing:
-            raise SystemExit("the file is missing the columns: %s" % ", ".join(sorted(missing)))
-        for row in reader:
-            rows.append(row)
-    return rows
+def human_duration(seconds):
+    """A length of time in words."""
+    seconds = float(seconds)
+    if seconds < 90:
+        return "%.0f seconds" % seconds
+    if seconds < 5400:
+        return "%.1f minutes" % (seconds / 60.0)
+    if seconds < 172800:
+        return "%.1f hours" % (seconds / 3600.0)
+    return "%.1f days" % (seconds / 86400.0)
+
+
+def rate(size, seconds):
+    if seconds <= 0:
+        return 0.0
+    return size / seconds
 
 
 def as_int(value, default=0):
@@ -105,27 +103,6 @@ def hour_of(row):
         return -1
 
 
-def human(size):
-    value = float(size)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1024 or unit == "TB":
-            return "%.1f %s" % (value, unit)
-        value /= 1024
-    return "%.1f TB" % value
-
-
-def human_duration(seconds):
-    """A duration in words, not in bytes."""
-    seconds = float(seconds)
-    if seconds < 90:
-        return "%.0f seconds" % seconds
-    if seconds < 5400:
-        return "%.1f minutes" % (seconds / 60.0)
-    if seconds < 172800:
-        return "%.1f hours" % (seconds / 3600.0)
-    return "%.1f days" % (seconds / 86400.0)
-
-
 def destination_of(row):
     return row.get("dst_name") or row.get("dst_ip") or "?"
 
@@ -138,62 +115,102 @@ def port_of(row):
     return as_int(row.get("dst_port"), 0)
 
 
-# -- the findings -----------------------------------------------------------
-def find_streams(rows, upload_bytes, upload_seconds):
-    """A long upload is what a camera or a backup looks like."""
+# -- the detectors ----------------------------------------------------------
+def find_streams(rows, min_rate, min_seconds):
+    """Traffic that keeps going and never stops.
+
+    A page loads in a second and then it is over.  A camera sends for
+    minutes, at a steady rate, and nobody is watching.  The rate is what
+    tells the two apart, not the amount.
+    """
     findings = []
     for row in rows:
         up = as_int(row["bytes_up"])
+        down = as_int(row["bytes_down"])
         duration = as_float(row["duration_s"])
-        if up < upload_bytes or duration < upload_seconds:
+        if duration < min_seconds:
             continue
-        rate = up / duration if duration else 0
-        findings.append(
-            Finding(
-                "stream",
-                "high",
-                "%.1f MB uploaded to %s:%s at %s, over %s"
-                % (up / 1048576.0, row.get("dst_ip"), row.get("dst_port"),
-                   row.get("time_of_day"), human_duration(duration)),
-                "%.0f KB per second, that looks like a stream" % (rate / 1024.0),
+        up_rate = rate(up, duration)
+        down_rate = rate(down, duration)
+        if up_rate >= min_rate:
+            findings.append(
+                Finding(
+                    "stream",
+                    "high",
+                    "%s is sending to %s:%s since %s, %s at %s per second"
+                    % (device_of(row), row.get("dst_ip"), row.get("dst_port"),
+                       row.get("time_of_day"), human(up), human(up_rate)),
+                    "it has been going for %s, that is what a camera looks like"
+                    % human_duration(duration),
+                )
             )
-        )
+        elif down_rate >= min_rate * 4:
+            findings.append(
+                Finding(
+                    "stream",
+                    "low",
+                    "%s is downloading from %s:%s at %s per second"
+                    % (device_of(row), row.get("dst_ip"), row.get("dst_port"),
+                       human(down_rate)),
+                    "it has been going for %s" % human_duration(duration),
+                )
+            )
     return findings
 
 
-def find_quiet_hours(rows, quiet_start, quiet_end, quiet_bytes):
+def find_night_traffic(rows, quiet_start, quiet_end, baseline):
     """What happened while everybody was asleep."""
     findings = []
     quiet = [r for r in rows if quiet_start <= hour_of(r) < quiet_end]
     if not quiet:
         return findings
-    up = sum(as_int(r["bytes_up"]) for r in quiet)
-    down = sum(as_int(r["bytes_down"]) for r in quiet)
-    if up < quiet_bytes and down < quiet_bytes:
-        return findings
+
     by_device = defaultdict(lambda: [0, 0, 0])
     for row in quiet:
         entry = by_device[device_of(row)]
         entry[0] += as_int(row["bytes_up"])
         entry[1] += as_int(row["bytes_down"])
         entry[2] += 1
-    for device, (up_bytes, down_bytes, count) in sorted(
+
+    # what the same device did in the same hours before
+    before = defaultdict(lambda: [0, 0])
+    if baseline:
+        for row in baseline:
+            if quiet_start <= hour_of(row) < quiet_end:
+                entry = before[device_of(row)]
+                entry[0] += as_int(row["bytes_up"])
+                entry[1] += as_int(row["bytes_down"])
+
+    for device, (up, down, count) in sorted(
         by_device.items(), key=lambda kv: -(kv[1][0] + kv[1][1])
     ):
+        was_up, was_down = before.get(device, [0, 0])
+        total = up + down
+        was = was_up + was_down
+        if total == 0:
+            continue
+        severity = "low"
+        detail = "%d flow(s)" % count
+        if was and total > was * 2:
+            severity = "medium"
+            detail = "%d flow(s), before it was %s in the same hours" % (count, human(was))
+        elif not was and total > 1024 * 1024:
+            severity = "medium"
+            detail = "%d flow(s), it has never done that" % count
         findings.append(
             Finding(
-                "quiet",
-                "medium",
-                "%s moved %s up and %s down between %02d:00 and %02d:00"
-                % (device, human(up_bytes), human(down_bytes), quiet_start, quiet_end),
-                "%d flow(s)" % count,
+                "night",
+                severity,
+                "%s moved %s between %02d:00 and %02d:00"
+                % (device, human(total), quiet_start, quiet_end),
+                detail,
             )
         )
     return findings
 
 
 def find_new_destinations(rows, baseline):
-    """Destinations and ports that were not there before."""
+    """Destinations that were not there before."""
     findings = []
     if not baseline:
         return findings
@@ -211,15 +228,13 @@ def find_new_destinations(rows, baseline):
         seen.add(dest)
         if dest in known:
             continue
-        if port and port in known_ports:
-            continue
-        unusual = port and (port not in KNOWN_PORTS or port >= HIGH_PORT)
+        unusual = port and (port not in KNOWN_PORTS or port > HIGH_PORT)
         findings.append(
             Finding(
                 "new",
                 "high" if unusual else "low",
-                "new destination %s:%s at %s" % (row.get("dst_ip"), row.get("dst_port"),
-                                                   row.get("time_of_day")),
+                "%s is talking to %s:%s, it never did that before"
+                % (device_of(row), row.get("dst_ip"), row.get("dst_port")),
                 "the port is not one of the usual ones" if unusual else "",
             )
         )
@@ -227,7 +242,7 @@ def find_new_destinations(rows, baseline):
 
 
 def find_odd_ports(rows):
-    """Ports that are not the usual ones, seen in this file."""
+    """Ports that a phone has no reason to use."""
     findings = []
     ports = Counter()
     where = {}
@@ -236,62 +251,84 @@ def find_odd_ports(rows):
         if not port or port in KNOWN_PORTS:
             continue
         ports[port] += 1
-        where.setdefault(port, (row.get("dst_ip"), row.get("time_of_day"), row.get("service")))
+        where.setdefault(
+            port, (row.get("dst_ip"), row.get("time_of_day"), device_of(row),
+                   as_int(row["bytes_up"]))
+        )
     for port, count in ports.most_common(10):
-        ip, at, service = where[port]
+        ip, at, device, up = where[port]
+        severity = "high" if port > HIGH_PORT else "medium"
         findings.append(
             Finding(
                 "port",
-                "medium",
-                "port %d is not a known service (%s), %d flow(s)" % (port, service, count),
-                "first seen at %s towards %s" % (at, ip),
+                severity,
+                "%s uses port %d, which is not a normal service" % (device, port),
+                "%d flow(s) to %s, first at %s, %s uploaded" % (count, ip, at, human(up)),
             )
         )
     return findings
 
 
-def find_long_absence(rows):
-    """A device that was quiet and then suddenly is not."""
+def find_talkers(rows, baseline):
+    """A device that suddenly became talkative."""
     findings = []
-    by_device = defaultdict(list)
+    if not baseline:
+        return findings
+    now = defaultdict(lambda: [0, 0])
+    before = defaultdict(lambda: [0, 0])
     for row in rows:
-        by_device[device_of(row)].append(row)
-    for device, device_rows in by_device.items():
-        if len(device_rows) < 2:
+        entry = now[device_of(row)]
+        entry[0] += 1
+        entry[1] += as_int(row["bytes_down"]) + as_int(row["bytes_up"])
+    for row in baseline:
+        entry = before[device_of(row)]
+        entry[0] += 1
+        entry[1] += as_int(row["bytes_down"]) + as_int(row["bytes_up"])
+    for device, (count, size) in now.items():
+        was_count, was_size = before.get(device, [0, 0])
+        if count < 20 or was_count == 0:
             continue
-        device_rows.sort(key=lambda r: r.get("ts_start") or "")
-        total = sum(as_int(r["bytes_up"]) + as_int(r["bytes_down"]) for r in device_rows)
-        if total < 1024 * 1024:
-            continue
-        first = device_rows[0].get("time_of_day")
-        last = device_rows[-1].get("time_of_day")
-        if first == last:
-            continue
-        findings.append(
-            Finding(
-                "device",
-                "low",
-                "%s moved %s between %s and %s" % (device, human(total), first, last),
-                "%d flow(s)" % len(device_rows),
+        if count > was_count * 3:
+            findings.append(
+                Finding(
+                    "talker",
+                    "medium",
+                    "%s opened %d connections, before it was %d" % (device, count, was_count),
+                    "%s in total" % human(size),
+                )
             )
-        )
-    return findings
-
-
-def collect_findings(rows, baseline, args):
-    findings = []
-    findings += find_streams(rows, args.upload_mb * 1048576.0, args.upload_seconds)
-    findings += find_quiet_hours(rows, args.quiet_start, args.quiet_end, args.quiet_mb)
-    findings += find_new_destinations(rows, baseline)
-    findings += find_odd_ports(rows)
-    findings += find_long_absence(rows)
-    order = {"high": 0, "medium": 1, "low": 2}
-    findings.sort(key=lambda f: order.get(f.severity, 3))
     return findings
 
 
 # -- the report -------------------------------------------------------------
-def report(rows, findings, args):
+def collect_findings(rows, baseline, options):
+    findings = []
+    findings += find_streams(rows, options.stream_rate, options.stream_seconds)
+    findings += find_night_traffic(
+        rows, options.quiet_start, options.quiet_end, baseline
+    )
+    findings += find_new_destinations(rows, baseline)
+    findings += find_odd_ports(rows)
+    findings += find_talkers(rows, baseline)
+    findings.sort(key=lambda f: SEVERITY_ORDER.get(f.severity, 3))
+    return findings
+
+
+def verdict(findings):
+    """One line: is there something to worry about?"""
+    high = sum(1 for f in findings if f.severity == "high")
+    medium = sum(1 for f in findings if f.severity == "medium")
+    low = sum(1 for f in findings if f.severity == "low")
+    if high:
+        return "%d THING(S) TO WORRY ABOUT" % high
+    if medium:
+        return "%d THING(S) WORTH A LOOK" % medium
+    if low:
+        return "nothing serious, %d small thing(s)" % low
+    return "NOTHING TO WORRY ABOUT"
+
+
+def report(rows, findings, options):
     if not rows:
         print("the file is empty")
         return
@@ -302,29 +339,28 @@ def report(rows, findings, args):
     times = sorted(r.get("time_of_day") for r in rows if r.get("time_of_day"))
 
     print("=" * 72)
-    print("traffic-inspector report  -  %d flow(s)" % len(rows))
-    print("=" * 72)
-    print("uploaded    %s" % human(total_up))
-    print("downloaded  %s" % human(total_down))
-    print("still open  %d" % len(active))
+    print("  traffic-inspector  -  %d flow(s), %s up, %s down"
+          % (len(rows), human(total_up), human(total_down)))
     if times:
-        print("between     %s and %s" % (times[0], times[-1]))
+        print("  between %s and %s, %d still open" % (times[0], times[-1], len(active)))
+    print("=" * 72)
+    print()
+    print("  %s" % verdict(findings))
     print()
 
     if findings:
-        print("-- worth a look " + "-" * 55)
         for number, finding in enumerate(findings, 1):
             print("  %d. [%s] %s" % (number, finding.severity.upper(), finding.title))
             if finding.detail:
                 print("       %s" % finding.detail)
         print()
     else:
-        print("-- worth a look " + "-" * 55)
-        print("  nothing unusual")
+        print("  No stream that never stops, no traffic in the quiet hours, no")
+        print("  destination that was not there before, no odd port.")
         print()
 
-    # -- devices ----------------------------------------------------------
-    print("-- devices -------------------------------------------------------")
+    # -- the devices -------------------------------------------------------
+    print("-- the devices ----------------------------------------------------")
     by_device = defaultdict(lambda: [0, 0, 0, "", ""])
     for row in rows:
         entry = by_device[device_of(row)]
@@ -341,14 +377,14 @@ def report(rows, findings, args):
         by_device.items(), key=lambda kv: -kv[1][0]
     ):
         print(
-            "  %-30s %4d flow(s)  %-10s  up %-10s  %s -> %s"
-            % (device[:30], count, human(size), human(up),
+            "  %-24s %4d flow(s)  %-10s  up %-10s  %s -> %s"
+            % (device[:24], count, human(size), human(up),
                (start or "?")[:19], (end or "still open")[:19])
         )
     print()
 
-    # -- destinations -----------------------------------------------------
-    print("-- destinations -------------------------------------------------")
+    # -- the destinations --------------------------------------------------
+    print("-- the destinations -----------------------------------------------")
     by_dest = defaultdict(lambda: [0, 0, 0])
     for row in rows:
         entry = by_dest[destination_of(row)]
@@ -364,8 +400,8 @@ def report(rows, findings, args):
         )
     print()
 
-    # -- ports and services ----------------------------------------------
-    print("-- ports and services -------------------------------------------")
+    # -- the ports ---------------------------------------------------------
+    print("-- the ports and the services -------------------------------------")
     by_port = defaultdict(lambda: [0, 0, ""])
     for row in rows:
         entry = by_port[row.get("dst_port") or "?"]
@@ -376,8 +412,8 @@ def report(rows, findings, args):
         print("  port %-8s %-16s %4d flow(s)  %s" % (port, service, count, human(size)))
     print()
 
-    # -- activity by hour -------------------------------------------------
-    print("-- activity by hour of day ---------------------------------------")
+    # -- the hours ---------------------------------------------------------
+    print("-- the hours of the day -------------------------------------------")
     hours = Counter()
     for row in rows:
         hour = hour_of(row)
@@ -388,29 +424,60 @@ def report(rows, findings, args):
         for hour in range(24):
             count = hours.get(hour, 0)
             bar = "#" * int(30 * count / peak) if peak else ""
-            print("  %02d:00  %4d %s" % (hour, count, bar))
+            mark = "  <- quiet" if options.quiet_start <= hour < options.quiet_end else ""
+            print("  %02d:00  %4d %s%s" % (hour, count, bar, mark))
     print()
 
-    # -- first seen destinations -------------------------------------------
-    print("-- first seen destinations ---------------------------------------")
-    first = {}
-    for row in sorted(rows, key=lambda r: r.get("ts_start") or ""):
-        dest = destination_of(row)
-        if dest not in first:
-            first[dest] = row
-    for dest, row in list(first.items())[:20]:
-        print("  %-40s first seen %s" % (dest[:40], row.get("ts_start")))
-    print()
+
+def load(path):
+    rows = []
+    with open(path, newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        missing = set(FIELDS) - set(reader.fieldnames or [])
+        if missing:
+            raise SystemExit("the file is missing the columns: %s" % ", ".join(sorted(missing)))
+        for row in reader:
+            rows.append(row)
+    return rows
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="analyse a traffic-inspector CSV file")
+    parser.add_argument("--csv", default="traffic.csv", help="CSV file to read")
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="an older CSV, only what is new compared to it is reported",
+    )
+    parser.add_argument(
+        "--quiet-start", type=int, default=0, help="first hour of the quiet period (default 0)"
+    )
+    parser.add_argument(
+        "--quiet-end", type=int, default=5, help="hour after the quiet period (default 5)"
+    )
+    parser.add_argument(
+        "--stream-rate",
+        type=float,
+        default=15 * 1024,
+        help="bytes per second that count as a stream (default 15 KB)",
+    )
+    parser.add_argument(
+        "--stream-seconds",
+        type=float,
+        default=30.0,
+        help="how long a stream has to last (default 30 s)",
+    )
+    return parser.parse_args(argv)
 
 
 def main(argv=None):
-    args = parse_args(argv)
-    rows = load(args.csv)
+    options = parse_args(argv)
+    rows = load(options.csv)
     baseline = None
-    if args.baseline and os.path.exists(args.baseline):
-        baseline = load(args.baseline)
-    findings = collect_findings(rows, baseline, args)
-    report(rows, findings, args)
+    if options.baseline and os.path.exists(options.baseline):
+        baseline = load(options.baseline)
+    findings = collect_findings(rows, baseline, options)
+    report(rows, findings, options)
     # something to look at?  the exit code says so, handy for a cron job
     return 1 if any(f.severity == "high" for f in findings) else 0
 

@@ -288,16 +288,40 @@ while the server runs.
 python tools/analyze.py --csv traffic.csv
 ```
 
+It leads with a verdict, then the details:
+
 ```
--- worth a look -------------------------------------------------------
-  1. [HIGH] 30.0 MB uploaded to 198.51.100.7:8081 at 02:14:33, over 5.0 minutes
-       102 KB per second, that looks like a stream
-  2. [MEDIUM] pixel8-android moved 42.0 MB up and 3.5 KB down between 00:00 and 05:00
-  3. [MEDIUM] port 8081 is not a known service (Unknown (8081)), 2 flow(s)
+========================================================================
+  traffic-inspector  -  12 flow(s), 60.0 MB up, 1.5 MB down
+  between 02:14:33 and 22:40:00, 0 still open
+========================================================================
+
+  2 THING(S) TO WORRY ABOUT
+
+  1. [HIGH] pixel8-android is sending to 198.51.100.7:8081 since 02:14:33, 50.0 MB at 17.1 KB per second
+       it has been going for 50.0 minutes, that is what a camera looks like
+  2. [MEDIUM] pixel8-android moved 60.1 MB between 00:00 and 05:00
+       2 flow(s), it has never done that
+  3. [MEDIUM] pixel8-android uses port 8081, which is not a normal service
+       2 flow(s) to 198.51.100.7, first at 02:14:33, 50.0 MB uploaded
 ```
 
+What it looks for:
+
+| | |
+|---|---|
+| **a stream** | an upload with a steady rate that never stops - the rate is what tells a camera apart from a page that loads |
+| **the quiet hours** | what happened between 00:00 and 05:00, and whether it is more than the device has ever done |
+| **a new destination** | a host that was not in the file of yesterday |
+| **an odd port** | a port that is not a normal service for a phone |
+| **a talker** | a device that suddenly opened many more connections than before |
+
 With `--baseline yesterday.csv` only what is *new* is reported, and the exit
-code says whether something needs a look, so it can run in a cron job.
+code says whether something needs a look, so it can run in a cron job:
+
+```bash
+python tools/analyze.py --csv traffic.csv --baseline yesterday.csv || mail -s "traffic" me@example.com
+```
 
 ---
 

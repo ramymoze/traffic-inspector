@@ -213,6 +213,34 @@ for the device (`pixel8-android`).  Then *start the tunnel* and let the
 system ask for the permission.  After that the flows show up in the app and
 in the CSV of the server, and the name of the device tells them apart.
 
+### The emulator
+
+Without a phone, the app can be tried on the emulator of Android Studio.
+The pieces that are needed:
+
+```bash
+# the sdk
+sdkmanager "platform-tools" "emulator" "platforms;android-35" "build-tools;35.0.0"
+sdkmanager "system-images;android-34;google_apis;x86_64"
+
+# a virtual device
+avdmanager create avd -n ti-test -k "system-images;android-34;google_apis;x86_64" -d pixel_5
+
+# start it
+emulator -avd ti-test -no-audio -no-boot-anim
+```
+
+The emulator reaches the machine it runs on at `10.0.2.2`, so that is the
+address for the server.  To skip the permission dialog of the system:
+
+```bash
+adb shell appops set com.trafficinspector ACTIVATE_VPN allow
+```
+
+The emulator is a computer, not a phone: its browser uses DNS over HTTPS and
+its network stack is not the one of a real device.  It is good enough to see
+that everything works, a real phone is the honest test.
+
 ## Beyond the local network
 
 On the same Wi-Fi nothing else is needed.  To test from mobile data or from

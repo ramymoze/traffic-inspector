@@ -230,6 +230,14 @@ avdmanager create avd -n ti-test -k "system-images;android-34;google_apis;x86_64
 emulator -avd ti-test -no-audio -no-boot-anim
 ```
 
+If the emulator hangs while it starts, the graphics are the problem.  Try
+another renderer:
+
+```bash
+emulator -avd ti-test -no-audio -no-boot-anim -gpu swangle
+# or: -gpu software, -gpu host
+```
+
 The emulator reaches the machine it runs on at `10.0.2.2`, so that is the
 address for the server.  To skip the permission dialog of the system:
 

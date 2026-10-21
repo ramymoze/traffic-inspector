@@ -38,6 +38,8 @@ DATA = 0x04  # both directions, payload bytes
 CLOSE = 0x05  # both directions, flow teardown
 PING = 0x06  # both directions, keepalive
 PONG = 0x07  # both directions, keepalive answer
+REPORT_REQ = 0x08  # client -> server, asks for the report
+REPORT_RES = 0x09  # server -> client, the report in pieces
 
 TYPE_NAMES = {
     HELLO: "HELLO",
@@ -48,6 +50,8 @@ TYPE_NAMES = {
     CLOSE: "CLOSE",
     PING: "PING",
     PONG: "PONG",
+    REPORT_REQ: "REPORT_REQ",
+    REPORT_RES: "REPORT_RES",
 }
 
 # --- OPEN_OK status codes --------------------------------------------------
@@ -102,6 +106,15 @@ IPPROTO_UDP = 17
 #: with a 2 byte big endian total datagram length followed by a chunk, so a
 #: datagram larger than one frame can be reassembled by the receiver.
 FLAG_DATAGRAM = 0x01
+
+#: A REPORT_RES frame carries a piece of the report.  Its payload starts with
+#: one byte of flags, four bytes of the offset of the piece in the whole
+#: report and four bytes of the length of the whole report, so the receiver
+#: can put the pieces back together even when they arrive out of order.
+REPORT_HEADER_LEN = 9
+
+#: Set on the last piece of the report.
+FLAG_LAST = 0x01
 
 
 class ProtocolError(Exception):
@@ -168,6 +181,35 @@ def type_name(ftype):
 
 def status_name(status):
     return STATUS_NAMES.get(status, "unknown(%d)" % status)
+
+
+def close_name(reason):
+    return CLOSE_NAMES.get(reason, "unknown(%d)" % reason)
+
+
+# --- the report ------------------------------------------------------------
+def build_report_chunk(text, offset, total, last=False):
+    """Build the payload of a REPORT_RES frame.
+
+    ``text`` is the piece of the report, ``offset`` where it belongs in the
+    whole report and ``total`` how long the whole report is.
+    """
+    flags = FLAG_LAST if last else 0
+    return bytes([flags]) + struct.pack("!II", offset, total) + text
+
+
+def parse_report_chunk(payload):
+    """Parse the payload of a REPORT_RES frame into a dict."""
+    if len(payload) < REPORT_HEADER_LEN:
+        raise ProtocolError("short REPORT payload")
+    flags = payload[0]
+    offset, total = struct.unpack("!II", payload[1:REPORT_HEADER_LEN])
+    return {
+        "last": bool(flags & FLAG_LAST),
+        "offset": offset,
+        "total": total,
+        "text": payload[REPORT_HEADER_LEN:],
+    }
 
 
 def close_name(reason):

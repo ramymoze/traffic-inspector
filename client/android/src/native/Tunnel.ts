@@ -89,6 +89,16 @@ export const Tunnel = {
     return NativeTunnel.defaultDevice();
   },
 
+  /**
+   * The report of the traffic the server has seen.
+   *
+   * The file with the traffic is on the server, so the phone asks for the
+   * report and the server sends it back.
+   */
+  getReport(): Promise<string> {
+    return NativeTunnel.getReport();
+  },
+
   onStateChanged(
     callback: (state: TunnelState, message: string) => void,
   ): EmitterSubscription {

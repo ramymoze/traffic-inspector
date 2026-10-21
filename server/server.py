@@ -17,11 +17,13 @@ import selectors
 import socket
 import struct
 import sys
+import threading
 import time
 from collections import deque
 
 from . import log as logs
 from . import protocol as proto
+from . import report as report_module
 from .crypto import (
     CLIENT_ID_LEN,
     CryptoError,
@@ -85,6 +87,8 @@ class TunnelServer:
 
         self.sessions = {}
         self.outbox = deque()
+        #: the reports that are ready to be sent
+        self._report_results = deque()
         self.selector = selectors.DefaultSelector()
         self.running = True
         self._last_summary = None
@@ -147,6 +151,7 @@ class TunnelServer:
                         if mask & selectors.EVENT_WRITE:
                             self.proxy.on_socket_writable(flow)
                 self.inspector.maybe_write()
+                self._send_reports()
                 self._expire_sessions()
                 self.proxy.expire_closing()
                 if time.time() - last_summary > 10:
@@ -312,8 +317,63 @@ class TunnelServer:
                 self.proxy.on_close(flow, payload)
         elif ftype == proto.PING:
             self.send_frame(session, flow_id, proto.PONG)
+        elif ftype == proto.REPORT_REQ:
+            self._handle_report_request(session)
         else:
             raise proto.ProtocolError("unexpected frame type %s" % proto.type_name(ftype))
+
+    # -- the report ---------------------------------------------------------
+    def _handle_report_request(self, session):
+        """A device asks for the report.
+
+        Making it reads the file and looks at every row, so it happens in a
+        thread.  The frames are sent by the main loop, because only the main
+        loop may use the key of the session.
+        """
+        logs.info("%s asks for the report" % (session.device or "a device"))
+        threading.Thread(
+            target=self._make_report, args=(session.addr,), daemon=True
+        ).start()
+
+    def _make_report(self, address):
+        """Read the file and put the report on the pile."""
+        try:
+            options = report_module.default_options(str(self.inspector.path))
+            # the archive of yesterday, so only what is new is reported
+            options.baseline = "auto"
+            baseline = report_module.find_baseline(options)
+            text = report_module.make_report(
+                str(self.inspector.path), baseline_path=baseline, options=options
+            )
+        except Exception as exc:
+            text = "the report could not be made: %s\n" % exc
+        self._report_results.append((address, text))
+
+    def _send_reports(self):
+        """Give the reports that are ready to the devices that asked."""
+        while self._report_results:
+            address, text = self._report_results.popleft()
+            session = self.sessions.get(address)
+            if session is None:
+                continue
+            data = text.encode("utf-8")
+            total = len(data)
+            room = proto.MAX_DATA - proto.REPORT_HEADER_LEN
+            offset = 0
+            while True:
+                piece = data[offset:offset + room]
+                offset += len(piece)
+                last = offset >= total
+                payload = proto.build_report_chunk(
+                    piece, offset - len(piece), total, last
+                )
+                self.send_frame(session, 0, proto.REPORT_RES, payload)
+                if last:
+                    break
+            logs.ok(
+                "the report was sent to %s (%d bytes)"
+                % (session.device or address[0], total)
+            )
 
     def _handle_open(self, session, flow_id, payload):
         try:

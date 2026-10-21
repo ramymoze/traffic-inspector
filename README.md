@@ -170,9 +170,15 @@ Press **start the tunnel** and let the system ask for the permission.  After
 that the status of the app turns green and the traffic of the phone shows up
 in the CSV of the server.
 
+**make the report** - the button under it.  The file with the traffic is on
+the server, so the phone cannot read it itself: it asks the server and the
+server makes the report and sends it back, and the app shows it.  The same
+text as `python tools/analyze.py` prints, so the phone and the terminal say
+the same thing.
+
 The app does one thing: it connects the phone to your server.  There is no
 list of flows and no log in it - the traffic is on the server, in
-`traffic.csv`.
+`traffic.csv`, and the app only shows what the server says about it.
 
 More, including how to reach the server from mobile data and a
 troubleshooting table: **[DEVICE_TEST.md](DEVICE_TEST.md)**.
@@ -341,6 +347,12 @@ python tools/analyze.py --csv traffic.csv --baseline yesterday.csv || mail -s "t
 keeps one file per day: `traffic.csv` is the current one, and when the day
 changes it is kept as `traffic-2026-10-21.csv` and a new one is started.
 That history is what makes "it never did that before" possible.
+
+The same report comes out of the app, with the button **make the report**.
+The phone asks the server for it over the tunnel and the server sends the
+text back, so the phone and the terminal always say the same thing.  The
+work is in `server/report.py`, the command line tool and the server use the
+same module.
 
 **To put the server on the internet** (a small VPS, systemd, the firewall
 and the daily report): **[tools/DEPLOY.md](tools/DEPLOY.md)**.

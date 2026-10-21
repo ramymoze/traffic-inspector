@@ -167,6 +167,9 @@ class TunnelClient:
         #: when the server answered the last ping
         self.last_answer = time.time()
         self._ping_id = 0
+        #: the pieces of the report the server sent, by their offset
+        self._report_pieces = {}
+        self._report_total = None
 
     # -- heartbeat ----------------------------------------------------------
     def ping(self):
@@ -329,6 +332,41 @@ class TunnelClient:
         with self._send_lock:
             self.sock.sendto(self.crypto.encrypt(header, bytes([reason])), self.server_addr)
 
+    # -- the report ---------------------------------------------------------
+    def request_report(self):
+        """Ask the server for the report of the traffic it has seen."""
+        header = proto.build_header(proto.REPORT_REQ, 0, 0)
+        with self._send_lock:
+            self.sock.sendto(self.crypto.encrypt(header, b""), self.server_addr)
+
+    def wait_for_report(self, timeout=30.0):
+        """Wait for the report and return it as text.
+
+        The report is bigger than one frame, so it comes in pieces.  They
+        are put back together here.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self.pump(timeout=0.5)
+            with self._flows_lock:
+                pieces = dict(self._report_pieces)
+                total = self._report_total
+            if total is None:
+                continue
+            if sum(len(piece) for piece in pieces.values()) < total:
+                continue
+            out = bytearray()
+            offset = 0
+            while offset < total:
+                piece = pieces.get(offset)
+                if piece is None:
+                    break
+                out += piece
+                offset += len(piece)
+            if offset >= total:
+                return bytes(out).decode("utf-8", "replace")
+        raise TunnelError("the server did not send the report in time")
+
     # -- receiving ----------------------------------------------------------
     def start_pump(self, on_data=None):
         """Read frames in the background until the client is closed."""
@@ -419,6 +457,11 @@ class TunnelClient:
         elif ftype == proto.PONG:
             # the server is still there
             self.last_answer = time.time()
+        elif ftype == proto.REPORT_RES:
+            chunk = proto.parse_report_chunk(payload)
+            with self._flows_lock:
+                self._report_pieces[chunk["offset"]] = chunk["text"]
+                self._report_total = chunk["total"]
 
     def close(self):
         self.running = False

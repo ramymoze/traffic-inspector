@@ -53,6 +53,26 @@ MTU.
 | `0x05` | `CLOSE` | both | `reason (1)` |
 | `0x06` | `PING` | both | empty |
 | `0x07` | `PONG` | both | empty |
+| `0x08` | `REPORT_REQ` | client -> server | empty |
+| `0x09` | `REPORT_RES` | server -> client | see below |
+
+### The report
+
+The traffic is recorded on the server, so a client that wants to know what
+its owner should see cannot read the file - it asks the server and the
+server sends the report back.
+
+`REPORT_REQ` is empty.  The server reads the file, makes the report and
+answers with `REPORT_RES` frames.  The report is bigger than one frame, so
+it comes in pieces and every piece says where it belongs:
+
+```
+flags (1) | offset (4) | total length (4) | text
+```
+
+`offset` is the place of the piece in the whole report, `total` is the
+length of the whole report, so the pieces can be put back together even
+when they arrive out of order.  Bit 0 of `flags` is set on the last piece.
 
 ### The device label
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -116,6 +117,9 @@ export default function ConnectScreen() {
   const [state, setState] = useState<TunnelState>('idle');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState('');
   const started = useRef(false);
 
   useEffect(() => {
@@ -206,6 +210,25 @@ export default function ConnectScreen() {
   }, []);
 
   const canStart = server.trim().length > 0 && key.trim().length > 0;
+
+  /**
+   * Ask the server for the report of the traffic it has seen.
+   *
+   * The file with the traffic is on the server, the phone only knows the
+   * address of it, so the report is made there and sent back.
+   */
+  const onReport = useCallback(async () => {
+    setReportBusy(true);
+    setReportError('');
+    try {
+      const text = await Tunnel.getReport();
+      setReport(text);
+    } catch (error: any) {
+      setReportError(String(error?.message ?? error));
+    } finally {
+      setReportBusy(false);
+    }
+  }, []);
 
   return (
     <KeyboardAvoidingView
@@ -320,11 +343,48 @@ export default function ConnectScreen() {
           </Text>
         </Pressable>
 
+        <Pressable
+          style={[
+            styles.reportButton,
+            !connected || reportBusy ? styles.buttonDisabled : null,
+          ]}
+          onPress={onReport}
+          disabled={!connected || reportBusy}>
+          <Text style={styles.reportButtonText}>
+            {reportBusy ? 'asking the server ...' : 'make the report'}
+          </Text>
+        </Pressable>
+        {reportError ? (
+          <Text style={styles.reportError}>{reportError}</Text>
+        ) : null}
+
         <Text style={styles.footer}>
           Everything this phone sends goes through your server.  The server
-          writes it into a file you can read at any time.
+          writes it into a file you can read at any time, and it makes the
+          report out of it.
         </Text>
       </ScrollView>
+
+      <Modal
+        visible={report !== null}
+        animationType="slide"
+        onRequestClose={() => setReport(null)}>
+        <View style={styles.reportScreen}>
+          <View style={styles.reportBar}>
+            <Text style={styles.reportTitle}>the report</Text>
+            <Pressable
+              onPress={() => setReport(null)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Text style={styles.reportClose}>close</Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            style={styles.reportScroll}
+            contentContainerStyle={styles.reportContent}>
+            <Text style={styles.reportText}>{report}</Text>
+          </ScrollView>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -504,5 +564,61 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
     marginTop: 22,
+  },
+  reportButton: {
+    marginTop: 10,
+    borderRadius: theme.radiusSmall,
+    paddingVertical: 13,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  reportButtonText: {
+    color: theme.textDim,
+    fontSize: 14.5,
+    fontWeight: '600',
+  },
+  reportError: {
+    color: theme.error,
+    fontSize: 12.5,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  reportScreen: {
+    flex: 1,
+    backgroundColor: theme.background,
+  },
+  reportBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  reportTitle: {
+    color: theme.text,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  reportClose: {
+    color: theme.accent,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  reportScroll: {
+    flex: 1,
+  },
+  reportContent: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  reportText: {
+    color: theme.textDim,
+    fontSize: 11.5,
+    lineHeight: 17,
+    fontFamily: theme.mono,
   },
 });

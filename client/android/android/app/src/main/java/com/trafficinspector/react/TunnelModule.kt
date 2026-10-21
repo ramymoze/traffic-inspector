@@ -180,6 +180,47 @@ class TunnelModule(reactContext: ReactApplicationContext) :
         promise.resolve(true)
     }
 
+    /**
+     * The report of the traffic the server has seen.
+     *
+     * The file with the traffic is on the server, so the phone asks for the
+     * report and the server sends it back.
+     */
+    @ReactMethod
+    fun getReport(promise: Promise) {
+        if (TunnelService.state != "connected") {
+            promise.reject("no_tunnel", "the tunnel is not up, there is no report yet")
+            return
+        }
+        val before = TunnelService.reportVersion
+        try {
+            val intent = Intent(reactApplicationContext, TunnelService::class.java).apply {
+                action = TunnelService.ACTION_REPORT
+            }
+            reactApplicationContext.startService(intent)
+        } catch (exc: Exception) {
+            promise.reject("cannot_ask", exc.message)
+            return
+        }
+        // the answer comes in pieces, the thread waits for the last one
+        Thread({
+            val deadline = System.currentTimeMillis() + 30000
+            while (System.currentTimeMillis() < deadline) {
+                if (TunnelService.reportVersion != before) {
+                    promise.resolve(TunnelService.report)
+                    return@Thread
+                }
+                try {
+                    Thread.sleep(150)
+                } catch (ignored: InterruptedException) {
+                    promise.reject("interrupted", "the wait was stopped")
+                    return@Thread
+                }
+            }
+            promise.reject("no_report", "the server did not send the report in time")
+        }, "report-waiter").start()
+    }
+
     @ReactMethod
     fun addListener(eventName: String) {
         // the events are sent from the service, nothing to do here

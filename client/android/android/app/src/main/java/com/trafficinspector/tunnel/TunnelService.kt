@@ -32,6 +32,7 @@ class TunnelService : VpnService() {
     companion object {
         const val ACTION_START = "com.trafficinspector.tunnel.START"
         const val ACTION_STOP = "com.trafficinspector.tunnel.STOP"
+        const val ACTION_REPORT = "com.trafficinspector.tunnel.REPORT"
 
         const val EXTRA_SERVER = "server"
         const val EXTRA_PORT = "port"
@@ -84,6 +85,14 @@ class TunnelService : VpnService() {
         @Volatile
         var device: String = ""
 
+        /** The report the server sent, the last one. */
+        @Volatile
+        var report: String = ""
+
+        /** How many reports came in, so the app can tell a new one. */
+        @Volatile
+        var reportVersion: Int = 0
+
         /** Told when something happens, so the app can show it. */
         val listeners = CopyOnWriteArrayList<Listener>()
 
@@ -124,6 +133,11 @@ class TunnelService : VpnService() {
         if (intent?.action == ACTION_STOP) {
             stopEverything()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_REPORT) {
+            // the app wants the report of the traffic the server has seen
+            requestReport()
+            return START_STICKY
         }
         // Only one tunnel at a time.  Two of them would fight over the
         // packets of the device and both would be broken.
@@ -216,6 +230,32 @@ class TunnelService : VpnService() {
             start()
         }
         return START_STICKY
+    }
+
+    /**
+     * Ask the server for the report.
+     *
+     * The file of the traffic is on the server, so the phone cannot read it
+     * itself - it asks and the server sends the report back.
+     */
+    private fun requestReport() {
+        val tunnel = client
+        if (tunnel == null || !tunnel.connected) {
+            Log.d(TAG, "the tunnel is not up, there is no report")
+            return
+        }
+        Log.d(TAG, "the server is asked for the report")
+        // sending is network work, it may not happen on the main thread
+        Thread({
+            try {
+                tunnel.requestReport()
+            } catch (exc: Exception) {
+                Log.d(TAG, "the report could not be asked for: ${exc.message}")
+            }
+        }, "report-request").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     /**
@@ -324,6 +364,15 @@ class TunnelService : VpnService() {
                     TunnelClient.TYPE_DATA -> theBridge.onTunnelData(frame.flowId, frame.payload)
                     TunnelClient.TYPE_OPEN_OK, TunnelClient.TYPE_CLOSE -> {
                         tunnel.flow(frame.flowId)?.let { theBridge.onTunnelStatus(it) }
+                    }
+                    TunnelClient.TYPE_REPORT_RES -> {
+                        // the report comes in pieces, it is put together here
+                        val text = tunnel.reportText()
+                        if (text != null) {
+                            report = text
+                            reportVersion++
+                            Log.d(TAG, "the report arrived, ${text.length} characters")
+                        }
                     }
                 }
                 flushToKernel()

@@ -128,9 +128,14 @@ class TunnelClient(
         const val TYPE_CLOSE = 0x05
         const val TYPE_PING = 0x06
         const val TYPE_PONG = 0x07
+        const val TYPE_REPORT_REQ = 0x08
+        const val TYPE_REPORT_RES = 0x09
 
         const val FLAG_DATAGRAM = 0x01
         const val MAX_DATA = 1200
+
+        /** The pieces of a report carry their place, see the protocol. */
+        const val REPORT_HEADER_LEN = 9
 
         const val STATUS_PENDING = -1
         const val STATUS_OK = 0
@@ -168,6 +173,13 @@ class TunnelClient(
     var reconnectWanted = false
 
     private val flows = ConcurrentHashMap<Int, RemoteFlow>()
+
+    /** The pieces of the report the server sent, by their offset. */
+    private val reportPieces = HashMap<Int, ByteArray>()
+
+    /** How long the whole report is, -1 when none came in yet. */
+    @Volatile
+    private var reportTotal: Int = -1
 
     @Volatile
     var connected = false
@@ -280,6 +292,44 @@ class TunnelClient(
     fun ping() {
         val id = 0x7F000000 or (pingCounter++ and 0xFFFF)
         sendFrame(TYPE_PING, id)
+    }
+
+    /** Ask the server for the report of the traffic it has seen. */
+    fun requestReport() {
+        synchronized(reportPieces) {
+            reportPieces.clear()
+            reportTotal = -1
+        }
+        sendFrame(TYPE_REPORT_REQ, 0)
+    }
+
+    /**
+     * The report as text, or null when it is not complete yet.
+     *
+     * The report is bigger than one frame, so it comes in pieces.  They
+     * carry the place they belong at, so they can be put back together.
+     */
+    fun reportText(): String? {
+        val total = reportTotal
+        if (total < 0) return null
+        val out = ByteArrayOutputStream()
+        synchronized(reportPieces) {
+            var offset = 0
+            while (offset < total) {
+                val piece = reportPieces[offset] ?: return null
+                out.write(piece)
+                offset += piece.size
+            }
+        }
+        return String(out.toByteArray(), Charsets.UTF_8)
+    }
+
+    /** Put one piece of the report in place. */
+    internal fun addReportPiece(offset: Int, total: Int, text: ByteArray) {
+        synchronized(reportPieces) {
+            reportPieces[offset] = text
+            reportTotal = total
+        }
     }
 
     /** Do the handshake again, for example when the server went away. */
@@ -396,6 +446,15 @@ class TunnelClient(
             TYPE_PONG -> {
                 // the server is still there
                 lastAnswer = System.currentTimeMillis()
+            }
+
+            TYPE_REPORT_RES -> {
+                if (payload.size < REPORT_HEADER_LEN) return
+                val buffer = java.nio.ByteBuffer.wrap(payload)
+                buffer.position(1)
+                val offset = buffer.int
+                val total = buffer.int
+                addReportPiece(offset, total, payload.copyOfRange(REPORT_HEADER_LEN, payload.size))
             }
         }
     }

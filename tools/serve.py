@@ -118,7 +118,11 @@ def adb_run(adb, *args, **kwargs):
 
 
 def start_emulator(sdk):
-    """Bring up the virtual machine with a window."""
+    """Bring up the virtual machine with a window.
+
+    The emulator is very talkative, its output goes into a file so the log of
+    the server stays readable.
+    """
     emulator = os.path.join(sdk, "emulator", "emulator.exe")
     if not os.path.exists(emulator):
         say("[!] the emulator is not installed")
@@ -127,10 +131,11 @@ def start_emulator(sdk):
     environment = dict(os.environ)
     environment["ANDROID_SDK_ROOT"] = sdk
     environment["ANDROID_HOME"] = sdk
+    log = open(os.path.join(ROOT, "emulator.log"), "w", encoding="utf-8", errors="replace")
     return subprocess.Popen(
         [emulator, "-avd", AVD, "-no-audio", "-no-boot-anim",
          "-gpu", "swiftshader_indirect", "-netdelay", "none", "-netspeed", "full"],
-        env=environment,
+        env=environment, stdout=log, stderr=log,
     )
 
 
@@ -278,6 +283,9 @@ def main(argv=None):
     parser.add_argument("--key-file", default=None)
     parser.add_argument("--emulator", action="store_true",
                         help="also start the emulator and the app in it")
+    parser.add_argument("--level", default="verbose",
+                        choices=["quiet", "normal", "verbose"],
+                        help="how much the server prints (default verbose)")
     parser.add_argument("--device", default="emulator-android",
                         help="the name the emulator reports itself with")
     args = parser.parse_args(argv)
@@ -293,7 +301,7 @@ def main(argv=None):
         port=args.port,
         csv_path=args.csv,
         key_file=args.key_file,
-        level="verbose",
+        level=args.level,
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

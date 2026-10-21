@@ -78,6 +78,13 @@ class TcpBridge(
     /** The packets come from one thread and the answers from another. */
     private val lock = Any()
 
+    /** Forget every flow, for example when the server went away. */
+    fun clear() = synchronized(lock) {
+        tcpFlows.clear()
+        udpFlows.clear()
+        byTunnelId.clear()
+    }
+
     // -- the kernel side ---------------------------------------------------
     /** Feed one IP packet that came from the kernel. */
     fun handlePacket(data: ByteArray) = synchronized(lock) {

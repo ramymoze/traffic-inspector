@@ -215,3 +215,6 @@ __marimo__/
 /android.csv
 /android.csv.*.tmp
 /story.csv
+/reconnect-test.csv
+/reconnect-test.log
+/emulator.log

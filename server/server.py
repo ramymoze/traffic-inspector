@@ -15,6 +15,7 @@ import hmac
 import secrets
 import selectors
 import socket
+import struct
 import sys
 import time
 from collections import deque
@@ -181,23 +182,45 @@ class TunnelServer:
         session = self.sessions.get(addr)
         if session is not None:
             try:
-                header, payload = session.crypto.decrypt(data)
+                opened = session.crypto.decrypt(data)
             except CryptoError:
-                session = None  # maybe a fresh handshake, fall through
-            else:
+                opened = None
+            if opened is not None:
+                header, payload = opened
                 parsed = proto.parse_header(header)
                 if len(payload) != parsed["length"]:
                     raise proto.ProtocolError("payload length mismatch")
                 session.touch()
                 return parsed["type"], parsed["flags"], parsed["flow_id"], payload
+            # a frame of an older session, it may be a fresh handshake
+            session = None
+            self._describe(addr, data, "not for this session")
 
         # No usable session: this must be a HELLO sealed with the master key.
-        header, payload = unseal_with_master(self.master, data)
+        try:
+            header, payload = unseal_with_master(self.master, data)
+        except CryptoError:
+            self._describe(addr, data, "not for this session")
+            raise CryptoError("authentication failed (MAC check failed)")
         parsed = proto.parse_header(header)
         if parsed["type"] != proto.HELLO:
             raise CryptoError("expected a HELLO frame")
         self._create_session(addr, payload)
         return parsed["type"], parsed["flags"], parsed["flow_id"], payload
+
+    def _describe(self, addr, data, why):
+        """Say what a frame that was refused looked like."""
+        if len(data) < 10:
+            logs.error("Inbound Error: %s (%d bytes) from %s" % (why, len(data), addr[0]))
+            return
+        version, ftype, flags, _rsv, length, flow_id = struct.unpack("!BBBBHI", data[:10])
+        session = self.sessions.get(addr)
+        expected = session.crypto.recv_id.hex() if session else "none"
+        actual = data[10:18].hex() if len(data) >= 18 else "?"
+        logs.error(
+            "Inbound Error: %s from %s (%s, flow %d, %d bytes, session %s, wanted %s)"
+            % (why, addr[0], proto.type_name(ftype), flow_id, length, actual, expected)
+        )
 
     def _create_session(self, addr, payload):
         client_id, client_nonce, proof, device = proto.parse_hello(payload)
@@ -207,6 +230,16 @@ class TunnelServer:
         server_id = secrets.token_bytes(CLIENT_ID_LEN)
         server_nonce = secrets.token_bytes(NONCE_LEN)
         key = derive_session_key(self.master, client_id, server_id, client_nonce, server_nonce)
+
+        # a client that comes back after a restart replaces its old session,
+        # the flows of the old one are dead
+        old = self.sessions.get(addr)
+        if old is not None:
+            for flow_id in list(old.flow_ids):
+                flow = self.proxy.flows.get((addr, flow_id))
+                if flow is not None:
+                    self.proxy.close_flow(flow, proto.CLOSE_TIMEOUT, "closed",
+                                         "the client came back")
 
         session = ClientSession(addr, client_id, server_id, key, device=device)
         self.sessions[addr] = session

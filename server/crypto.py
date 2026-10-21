@@ -162,7 +162,6 @@ class SessionCrypto:
         self.recv_id = recv_id
         self._send_counter = 0
         self._recv_counter = 0
-
     def encrypt(self, header, payload):
         nonce = self.send_id + self._send_counter.to_bytes(4, "big")
         self._send_counter += 1
@@ -172,6 +171,8 @@ class SessionCrypto:
         expected = self.recv_id + self._recv_counter.to_bytes(4, "big")
         actual = wire[HEADER_LEN:HEADER_LEN + NONCE_LEN]
         if actual != expected:
-            raise CryptoError("unexpected nonce (replay or reordered frame)")
+            # A frame of an older session, it is not for us.  It must not stop
+            # the connection, it would never see anything again.
+            return None
         self._recv_counter += 1
         return unseal(self.key, wire)

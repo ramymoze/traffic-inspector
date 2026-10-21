@@ -141,10 +141,11 @@ class TunnelClient(
 
     private val random = SecureRandom()
     private val socket = DatagramSocket()
+    private val sendLock = Any()
     private val serverAddress = InetSocketAddress(serverHost, serverPort)
 
-    private val clientId = ByteArray(SESSION_ID_LEN).also { random.nextBytes(it) }
-    private val clientNonce = ByteArray(SESSION_ID_LEN).also { random.nextBytes(it) }
+    private var clientId = ByteArray(SESSION_ID_LEN).also { random.nextBytes(it) }
+    private var clientNonce = ByteArray(SESSION_ID_LEN).also { random.nextBytes(it) }
 
     private var sessionKey: ByteArray? = null
     private var sendId = ByteArray(0)
@@ -152,6 +153,19 @@ class TunnelClient(
     private var sendCounter = 0
     private var recvCounter = 0
     private var nextFlowId = 1
+    private var pingCounter = 0
+
+    /** When the server answered the last ping. */
+    @Volatile
+    var lastAnswer: Long = System.currentTimeMillis()
+        private set
+
+    /**
+     * Set when the server went quiet.  The thread that reads from the socket
+     * does the reconnect, only one thread may read from it.
+     */
+    @Volatile
+    var reconnectWanted = false
 
     private val flows = ConcurrentHashMap<Int, RemoteFlow>()
 
@@ -160,7 +174,23 @@ class TunnelClient(
         private set
 
     // -- the handshake ----------------------------------------------------
-    fun handshake(timeoutMillis: Long = 15000) {
+    /**
+     * Do the handshake.  It holds the lock of the frames, so no frame of the
+     * old session can slip out in the middle of it.
+     */
+    fun handshake(timeoutMillis: Long = 15000) = synchronized(sendLock) {
+        // Throw away what is left of the old session.  Otherwise the buffer
+        // of the socket is full and the answer of the server, which is the
+        // newest datagram, is simply dropped.
+        drain()
+
+        // a new session gets new numbers, so a reconnect starts from scratch
+        clientId = ByteArray(SESSION_ID_LEN).also { random.nextBytes(it) }
+        clientNonce = ByteArray(SESSION_ID_LEN).also { random.nextBytes(it) }
+        sendCounter = 0
+        recvCounter = 0
+        lastAnswer = System.currentTimeMillis()
+
         val proof = hmac(masterKey, "ti-hello-v1".toByteArray() + clientId + clientNonce)
             .copyOf(PROOF_LEN)
         val label = device.toByteArray(Charsets.UTF_8).let {
@@ -168,26 +198,18 @@ class TunnelClient(
         }
         val payload = clientId + clientNonce + proof + byteArrayOf(label.size.toByte()) + label
         val header = buildHeader(TYPE_HELLO, 0, payload.size)
+        // The answer of the server is sealed with the master key, not with
+        // the key of the old session.
+        sessionKey = null
         sendRaw(seal(masterKey, randomBytes(NONCE_LEN), header, payload))
 
-        val frame = receiveFrame(timeoutMillis)
+        val frame = waitForTheAnswer(timeoutMillis)
             ?: throw TunnelException("the server did not answer the handshake")
-        if (frame.type != TYPE_HELLO_ACK) {
-            throw TunnelException("expected HELLO_ACK, got ${frame.type}")
-        }
         if (frame.payload.size < SESSION_ID_LEN * 2 + PROOF_LEN) {
             throw TunnelException("short HELLO_ACK")
         }
         val serverId = frame.payload.copyOfRange(0, SESSION_ID_LEN)
         val serverNonce = frame.payload.copyOfRange(SESSION_ID_LEN, SESSION_ID_LEN * 2)
-        val proofOk = frame.payload.copyOfRange(SESSION_ID_LEN * 2, SESSION_ID_LEN * 2 + PROOF_LEN)
-        val expected = hmac(
-            masterKey,
-            "ti-ack-v1".toByteArray() + clientId + serverId + clientNonce + serverNonce
-        ).copyOf(PROOF_LEN)
-        if (!MessageDigest.isEqual(proofOk, expected)) {
-            throw TunnelException("the server did not prove it knows the master key")
-        }
 
         sessionKey = hkdf(
             masterKey,
@@ -198,6 +220,74 @@ class TunnelClient(
         sendId = clientId
         recvId = serverId
         connected = true
+        lastAnswer = System.currentTimeMillis()
+    }
+
+    /** Read and throw away everything that is still in the buffer. */
+    private fun drain() {
+        val packet = DatagramPacket(ByteArray(65535), 65535)
+        socket.soTimeout = 1
+        try {
+            while (true) {
+                socket.receive(packet)
+            }
+        } catch (ignored: Exception) {
+            // nothing left
+        }
+    }
+
+    /**
+     * Wait for the answer of the server.
+     *
+     * After a reconnect there can still be frames of the old session in the
+     * buffer, and the answer of an earlier handshake can be in there as well.
+     * They are not for us and must not stop the handshake, so they are
+     * skipped.
+     */
+    private fun waitForTheAnswer(timeoutMillis: Long): Frame? {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline) {
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) return null
+            val frame = try {
+                receiveFrame(remaining)
+            } catch (ignored: TunnelException) {
+                // a frame of an older session, it is not for us
+                continue
+            }
+            if (frame == null) continue
+            if (frame.type != TYPE_HELLO_ACK) continue
+            if (frame.payload.size < SESSION_ID_LEN * 2 + PROOF_LEN) continue
+            val serverId = frame.payload.copyOfRange(0, SESSION_ID_LEN)
+            val serverNonce = frame.payload.copyOfRange(SESSION_ID_LEN, SESSION_ID_LEN * 2)
+            val proofOk = frame.payload.copyOfRange(
+                SESSION_ID_LEN * 2, SESSION_ID_LEN * 2 + PROOF_LEN
+            )
+            val expected = hmac(
+                masterKey,
+                "ti-ack-v1".toByteArray() + clientId + serverId + clientNonce + serverNonce
+            ).copyOf(PROOF_LEN)
+            if (!MessageDigest.isEqual(proofOk, expected)) {
+                // the answer belongs to an earlier handshake
+                continue
+            }
+            return frame
+        }
+        return null
+    }
+
+    /** Ask the server whether it is still there. */
+    fun ping() {
+        val id = 0x7F000000 or (pingCounter++ and 0xFFFF)
+        sendFrame(TYPE_PING, id)
+    }
+
+    /** Do the handshake again, for example when the server went away. */
+    fun reconnect(timeoutMillis: Long = 15000): Boolean = try {
+        handshake(timeoutMillis)
+        true
+    } catch (ignored: Exception) {
+        false
     }
 
     // -- flows ------------------------------------------------------------
@@ -262,7 +352,8 @@ class TunnelClient(
         val received = packet.length
         if (received <= 0) return null
         val wire = packet.data.copyOfRange(0, received)
-        val (header, payload) = decrypt(wire)
+        val decrypted = decrypt(wire) ?: return null
+        val (header, payload) = decrypted
         val buffer = java.nio.ByteBuffer.wrap(header)
         buffer.get() // the version
         val type = buffer.get().toInt() and 0xFF
@@ -301,13 +392,27 @@ class TunnelClient(
             TYPE_CLOSE -> {
                 flows[flowId]?.markClosed()
             }
+
+            TYPE_PONG -> {
+                // the server is still there
+                lastAnswer = System.currentTimeMillis()
+            }
         }
     }
 
     // -- the wire ---------------------------------------------------------
-    private fun sendFrame(type: Int, flowId: Int, payload: ByteArray, flags: Int = 0) {
-        val header = buildHeader(type, flowId, payload.size, flags)
-        sendRaw(encrypt(header, payload))
+    private fun sendFrame(
+        type: Int,
+        flowId: Int,
+        payload: ByteArray = ByteArray(0),
+        flags: Int = 0
+    ) {
+        // the counter of the nonces belongs to the frames, so only one thread
+        // may send at a time
+        synchronized(sendLock) {
+            val header = buildHeader(type, flowId, payload.size, flags)
+            sendRaw(encrypt(header, payload))
+        }
     }
 
     private fun sendRaw(data: ByteArray) {
@@ -393,7 +498,7 @@ class TunnelClient(
         return seal(key, nonce, header, payload)
     }
 
-    private fun decrypt(wire: ByteArray): Pair<ByteArray, ByteArray> {
+    private fun decrypt(wire: ByteArray): Pair<ByteArray, ByteArray>? {
         val key = sessionKey
         if (key == null) {
             // before the handshake is done the master key is used and the
@@ -403,7 +508,9 @@ class TunnelClient(
         val expected = recvId + counter(recvCounter)
         val actual = wire.copyOfRange(HEADER_LEN, HEADER_LEN + NONCE_LEN)
         if (!MessageDigest.isEqual(expected, actual)) {
-            throw TunnelException("unexpected nonce (replay or reordered frame)")
+            // A frame of an older session, it is not for us.  It must not
+            // stop the client, it would never see anything again.
+            return null
         }
         recvCounter++
         return unseal(key, wire)

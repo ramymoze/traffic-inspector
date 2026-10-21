@@ -66,15 +66,16 @@ def test_tampered_header_is_rejected():
 
 
 def test_replayed_frame_is_rejected():
+    """A frame that comes twice must not be taken twice."""
     key = bytes(range(32))
     client = SessionCrypto(key, send_id=b"c" * 8, recv_id=b"s" * 8)
     server = SessionCrypto(key, send_id=b"s" * 8, recv_id=b"c" * 8)
 
     header = proto.build_header(proto.DATA, 7, 5)
     wire = client.encrypt(header, b"hello")
-    server.decrypt(wire)
-    with pytest.raises(CryptoError):
-        server.decrypt(wire)
+    assert server.decrypt(wire) is not None
+    # the same frame again: it is not for us any more
+    assert server.decrypt(wire) is None
 
 
 def test_handshake_proofs():

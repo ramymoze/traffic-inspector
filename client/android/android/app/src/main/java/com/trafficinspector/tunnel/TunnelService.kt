@@ -78,6 +78,12 @@ class TunnelService : VpnService() {
         private const val CHANNEL_ID = "traffic-inspector"
         private const val TAG = "TrafficInspector"
 
+        /** How often the client asks the server whether it is still there. */
+        private const val PING_INTERVAL = 10000L
+
+        /** How long the server may be quiet before the client reconnects. */
+        private const val PING_TIMEOUT = 30000L
+
         /** Android has no /etc/services, so the common ports are listed here. */
         private val SERVICES = mapOf(
             20 to "ftp", 21 to "ftp", 22 to "ssh", 23 to "telnet", 25 to "smtp",
@@ -128,15 +134,30 @@ class TunnelService : VpnService() {
     private var bridge: TcpBridge? = null
     private var reader: Thread? = null
     private var receiver: Thread? = null
+    private var heartbeat: Thread? = null
     @Volatile
     private var running = false
     private val writeLock = Any()
+    private val lock = Any()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopEverything()
             return START_NOT_STICKY
         }
+        // Only one tunnel at a time.  Two of them would fight over the
+        // packets of the device and both would be broken.
+        synchronized(lock) {
+            if (running) {
+                Log.d(TAG, "the tunnel is already running")
+                return START_STICKY
+            }
+            running = true
+            return startTunnel(intent)
+        }
+    }
+
+    private fun startTunnel(intent: Intent?): Int {
         val server = intent?.getStringExtra(EXTRA_SERVER) ?: ""
         val port = intent?.getIntExtra(EXTRA_PORT, 5555) ?: 5555
         val keyHex = intent?.getStringExtra(EXTRA_KEY) ?: ""
@@ -246,9 +267,6 @@ class TunnelService : VpnService() {
         }
         client = tunnel
         bridge = theBridge
-        // the flag has to be set before the threads start, otherwise the
-        // reader sees it as false and stops at once
-        running = true
 
         reader = Thread({ readFromKernel(vpn) }, "tunnel-reader").apply {
             isDaemon = true
@@ -258,7 +276,44 @@ class TunnelService : VpnService() {
             isDaemon = true
             start()
         }
+        heartbeat = Thread({ keepTheTunnelAlive(tunnel) }, "tunnel-heartbeat").apply {
+            isDaemon = true
+            start()
+        }
         return START_STICKY
+    }
+
+    /**
+     * Ask the server every ten seconds whether it is still there.
+     *
+     * Without it a client that lost its server would keep sending into a
+     * tunnel that is not there any more, and nothing would come back.  The
+     * ping also keeps the session of the server alive, it would drop it
+     * after five minutes of silence.
+     *
+     * Only the thread that reads from the socket may do the handshake, so
+     * the heartbeat only asks for it.
+     */
+    private fun keepTheTunnelAlive(tunnel: TunnelClient) {
+        while (running) {
+            try {
+                Thread.sleep(PING_INTERVAL)
+            } catch (ignored: InterruptedException) {
+                return
+            }
+            if (!running) return
+            try {
+                val silent = System.currentTimeMillis() - tunnel.lastAnswer
+                if (silent > PING_TIMEOUT) {
+                    Log.d(TAG, "the server did not answer for ${silent / 1000}s, connecting again")
+                    tunnel.reconnectWanted = true
+                } else {
+                    tunnel.ping()
+                }
+            } catch (exc: Exception) {
+                Log.d(TAG, "the heartbeat failed: ${exc.message}")
+            }
+        }
     }
 
     // -- the two threads ---------------------------------------------------
@@ -309,12 +364,27 @@ class TunnelService : VpnService() {
     }
 
     private fun receiveFromServer(tunnel: TunnelClient, theBridge: TcpBridge) {
-        try {
-            tunnel.handshake()
-            publish("connected", "the tunnel is up")
-            Log.d(TAG, "the tunnel is up")
-            while (running) {
-                val frame = tunnel.receiveFrame(1000) ?: continue
+        var up = false
+        while (running) {
+            try {
+                if (!up) {
+                    // A fresh session, the old one is gone
+                    tunnel.handshake()
+                    theBridge.clear()
+                    up = true
+                    Log.d(TAG, "the tunnel is up")
+                    publish("connected", "the tunnel is up")
+                }
+                val frame = tunnel.receiveFrame(1000)
+                if (frame == null) {
+                    if (tunnel.reconnectWanted) {
+                        tunnel.reconnectWanted = false
+                        up = false
+                        Log.d(TAG, "the server went away, connecting again")
+                        publish("connecting", "the server went away, connecting again")
+                    }
+                    continue
+                }
                 when (frame.type) {
                     TunnelClient.TYPE_DATA -> theBridge.onTunnelData(frame.flowId, frame.payload)
                     TunnelClient.TYPE_OPEN_OK, TunnelClient.TYPE_CLOSE -> {
@@ -322,10 +392,16 @@ class TunnelService : VpnService() {
                     }
                 }
                 flushToKernel()
+            } catch (exc: Exception) {
+                Log.d(TAG, "the tunnel failed: ${exc.message}")
+                publish("error", exc.message ?: "the tunnel failed")
+                up = false
+                try {
+                    Thread.sleep(2000)
+                } catch (ignored: InterruptedException) {
+                    return
+                }
             }
-        } catch (exc: Exception) {
-            Log.d(TAG, "the tunnel failed: ${exc.message}")
-            publish("error", exc.message ?: "the tunnel failed")
         }
     }
 
@@ -412,6 +488,7 @@ class TunnelService : VpnService() {
         bridge = null
         reader?.interrupt()
         receiver?.interrupt()
+        heartbeat?.interrupt()
         publish("stopped", "the tunnel is down")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

@@ -164,16 +164,56 @@ class TunnelClient:
         self._send_lock = threading.Lock()
         self._flows_lock = threading.RLock()
         self._pump_thread = None
+        #: when the server answered the last ping
+        self.last_answer = time.time()
+        self._ping_id = 0
+
+    # -- heartbeat ----------------------------------------------------------
+    def ping(self):
+        """Ask the server whether it is still there."""
+        header = proto.build_header(proto.PING, self._ping_id, 0)
+        with self._send_lock:
+            self.sock.sendto(self.crypto.encrypt(header, b""), self.server_addr)
+        self._ping_id += 1
+
+    def reconnect(self, timeout=15.0):
+        """Do the handshake again, for example when the server went away."""
+        try:
+            self.handshake()
+            return True
+        except (TunnelError, OSError):
+            return False
 
     # -- handshake ----------------------------------------------------------
     def handshake(self):
+        """Do the handshake.
+
+        It holds the lock of the frames, so no frame of the old session can
+        slip out in the middle of it.
+        """
+        with self._send_lock:
+            return self._handshake()
+
+    def _handshake(self):
+        # Throw away what is left of the old session.  Otherwise the buffer of
+        # the socket is full and the answer of the server, which is the
+        # newest datagram, is simply dropped.
+        self._drain()
+
+        # a new session gets new numbers, so a reconnect starts from scratch
+        self.client_id = secrets.token_bytes(CLIENT_ID_LEN)
+        self.client_nonce = secrets.token_bytes(NONCE_LEN)
+        self._send_counter = 0
+        self._recv_counter = 0
+        self.last_answer = time.time()
+
         proof = hello_proof(self.master, self.client_id, self.client_nonce)
         payload = proto.build_hello(self.client_id, self.client_nonce, proof, self.device)
         header = proto.build_header(proto.HELLO, 0, len(payload))
         self.sock.sendto(seal_with_master(self.master, header, payload), self.server_addr)
 
         data, _ = self.sock.recvfrom(65535)
-        header, payload = unseal_with_master(self.master, data)
+        header, payload = self._read_the_answer(data)
         parsed = proto.parse_header(header)
         if parsed["type"] != proto.HELLO_ACK:
             raise TunnelError("expected HELLO_ACK, got %s" % proto.type_name(parsed["type"]))
@@ -192,7 +232,41 @@ class TunnelClient:
             self.master, self.client_id, self.server_id, self.client_nonce, self.server_nonce
         )
         self.crypto = SessionCrypto(key, send_id=self.client_id, recv_id=self.server_id)
+        self.last_answer = time.time()
         return self
+
+    def _drain(self):
+        """Read and throw away everything that is still in the buffer."""
+        self.sock.settimeout(0.05)
+        try:
+            while True:
+                self.sock.recvfrom(65535)
+        except (socket.timeout, OSError):
+            pass
+        finally:
+            self.sock.settimeout(self.timeout)
+
+    def _read_the_answer(self, data):
+        """The answer of the server.
+
+        After a reconnect there can still be frames of the old session in the
+        buffer.  They are not for us and must not stop the handshake, so they
+        are skipped.
+        """
+        deadline = time.time() + 15.0
+        while True:
+            try:
+                header, payload = unseal_with_master(self.master, data)
+            except CryptoError:
+                header, payload = None, None
+            if header is not None and proto.parse_header(header)["type"] == proto.HELLO_ACK:
+                return header, payload
+            if time.time() > deadline:
+                raise TunnelError("the server did not answer the handshake")
+            try:
+                data, _ = self.sock.recvfrom(65535)
+            except socket.timeout:
+                raise TunnelError("the server did not answer the handshake")
 
     # -- flows --------------------------------------------------------------
     def open_flow(self, dst_host, dst_port, protocol=proto.IPPROTO_TCP,
@@ -297,9 +371,13 @@ class TunnelClient:
 
     def _dispatch(self, data, on_data=None):
         try:
-            header, payload = self.crypto.decrypt(data)
+            opened = self.crypto.decrypt(data)
         except CryptoError as exc:
             raise TunnelError("cannot decrypt the answer: %s" % exc)
+        if opened is None:
+            # a frame of an older session, not for us
+            return
+        header, payload = opened
         parsed = proto.parse_header(header)
         ftype = parsed["type"]
         flow_id = parsed["flow_id"]
@@ -339,7 +417,8 @@ class TunnelClient:
                 flow.closed = True
                 flow.mark_eof()
         elif ftype == proto.PONG:
-            pass
+            # the server is still there
+            self.last_answer = time.time()
 
     def close(self):
         self.running = False

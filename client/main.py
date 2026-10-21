@@ -11,15 +11,15 @@ The pieces are:
 * the tunnel client, which carries them to the server
 
 On Linux the interface and the routes are set up automatically, which needs
-root.  Use ``--no-setup`` when the routes are managed by something else.
+root.  On Windows the adapter comes from Wintun, the routes are set up with
+``netsh`` and the whole thing needs an elevated prompt.  Use ``--no-setup``
+when the routes are managed by something else.
 """
 
 import argparse
 import os
-import select
 import signal
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,6 +50,11 @@ def parse_args(argv=None):
         "--no-setup", action="store_true", help="do not touch the routes or the resolver"
     )
     parser.add_argument(
+        "--wintun",
+        default=None,
+        help="the Wintun driver to use on Windows (default: client/wintun.dll)",
+    )
+    parser.add_argument(
         "--keep-routes", action="store_true", help="leave the routes alone on exit"
     )
     return parser.parse_args(argv)
@@ -58,12 +63,10 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
 
-    if os.name != "nt":
-        from client.tun_linux import LinuxTun, setup, teardown
+    if os.name == "nt":
+        from client.tun_windows import WintunTun, setup, teardown
     else:
-        print("The TUN client is Linux only for now, use client/socks.py on Windows.",
-              file=sys.stderr)
-        return 1
+        from client.tun_linux import LinuxTun, setup, teardown
 
     try:
         master = load_master_key(args.key_file)
@@ -88,10 +91,20 @@ def main(argv=None):
     )
     client.start_pump(bridge.on_tunnel_data)
 
-    if not args.no_setup:
-        setup(args.tun, args.address, server=args.server, dns=args.dns)
-
-    tun = LinuxTun(args.tun).open()
+    if os.name == "nt":
+        # the adapter has to exist before it can get an address
+        try:
+            tun = WintunTun(args.tun, dll=args.wintun).open()
+        except Exception as exc:
+            print("Cannot open the Wintun adapter: %s" % exc, file=sys.stderr)
+            client.close()
+            return 1
+        if not args.no_setup:
+            setup(args.tun, args.address, server=args.server, dns=args.dns)
+    else:
+        if not args.no_setup:
+            setup(args.tun, args.address, server=args.server, dns=args.dns)
+        tun = LinuxTun(args.tun).open()
     print("[*] The traffic of this machine now goes through the tunnel.")
 
     running = {"value": True}
@@ -104,18 +117,16 @@ def main(argv=None):
 
     try:
         while running["value"]:
-            readable, _, _ = select.select([tun.fd], [], [], 0.1)
-            if readable:
-                packet = tun.read()
-                if packet:
-                    bridge.handle_packet(packet)
+            packet = tun.read(timeout=0.1)
+            if packet:
+                bridge.handle_packet(packet)
             bridge.pump()
             for packet in bridge.take_output():
                 tun.write(packet)
     finally:
         tun.close()
         if not args.no_setup and not args.keep_routes:
-            teardown(args.tun)
+            teardown(args.tun, args.address, server=args.server)
         client.close()
         print("\n[*] The tunnel is down.")
     return 0

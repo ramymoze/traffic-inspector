@@ -212,9 +212,14 @@ __marimo__/
 # traffic-inspector runtime artifacts
 /traffic.csv
 /traffic.csv.*.tmp
+/traffic-*.csv
 /android.csv
 /android.csv.*.tmp
 /story.csv
 /reconnect-test.csv
 /reconnect-test.log
 /emulator.log
+
+# the Wintun driver, it is downloaded and not part of the sources
+/client/wintun.dll
+/client/vendor/

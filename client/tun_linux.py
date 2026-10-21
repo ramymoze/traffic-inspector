@@ -11,6 +11,7 @@ expects.
 
 import fcntl
 import os
+import select
 import struct
 import subprocess
 
@@ -48,8 +49,16 @@ class LinuxTun:
         fcntl.ioctl(self.fd, TUNSETIFF, ifr)
         return self
 
-    def read(self, size=65535):
-        """Read one IP packet, or None when there is nothing."""
+    def read(self, size=65535, timeout=None):
+        """Read one IP packet, or None when there is nothing.
+
+        With a timeout it waits that long for a packet, so the caller can
+        keep doing other things.
+        """
+        if timeout is not None:
+            ready, _, _ = select.select([self.fd], [], [], timeout)
+            if not ready:
+                return None
         try:
             return os.read(self.fd, size)
         except BlockingIOError:
@@ -154,8 +163,11 @@ def _write_resolv(nameservers):
         handle.write(content)
 
 
-def teardown(name="ti0"):
+def teardown(name="ti0", address=DEFAULT_ADDRESS, server=None):
     """Remove the interface and the routes."""
     _run("ip route del 0.0.0.0/1 dev %s" % name, check=False)
     _run("ip route del 128.0.0.0/1 dev %s" % name, check=False)
+    if server:
+        # the way to the server that does not go through the tunnel
+        _run("ip route del %s/32" % server, check=False)
     _run("ip link delete %s" % name, check=False)

@@ -209,7 +209,7 @@ that everything works, a real phone is the honest test.
 | Client | What it is |
 |---|---|
 | `client/android` | the app for a phone, React Native in front and Kotlin behind |
-| `client/main.py` | the command line client for Linux, it uses a TUN device |
+| `client/main.py` | the command line client for Linux and Windows, it uses a TUN device |
 | `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel |
 | `testing.py` | a small stub, it opens one flow and prints the answer |
 
@@ -218,6 +218,20 @@ The Linux client needs root, it creates the interface and the routes:
 ```bash
 sudo python -m client.main --server <the address of the server> --port 5555 \
      --tun ti0 --address 10.8.0.1/24 --dns 8.8.8.8
+```
+
+The Windows client needs the same, but as administrator.  The virtual
+adapter comes from **Wintun**, a single file that is fetched once:
+
+```
+python -m client.tun_windows --download
+```
+
+Then the client puts the whole traffic of the machine into the tunnel, the
+routes and the resolver included:
+
+```
+python -m client.main --server <the address of the server> --port 5555 --device desktop-win
 ```
 
 The SOCKS5 client works everywhere Python does, and only covers what is

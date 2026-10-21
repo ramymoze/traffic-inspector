@@ -13,27 +13,6 @@ export type TunnelState =
   | 'error'
   | 'stopped';
 
-export interface FlowInfo {
-  flowId: number;
-  srcIp: string;
-  srcPort: number;
-  dstIp: string;
-  dstPort: number;
-  proto: string;
-  service: string;
-  bytesUp: number;
-  bytesDown: number;
-  state: string;
-  at: string;
-}
-
-export interface TunnelStatus {
-  state: TunnelState;
-  message: string;
-  device: string;
-  flows: FlowInfo[];
-}
-
 export interface TunnelConfig {
   server: string;
   port: number;
@@ -46,6 +25,12 @@ export interface SavedConfig {
   server: string;
   port: number;
   key: string;
+  device: string;
+}
+
+export interface TunnelStatus {
+  state: TunnelState;
+  message: string;
   device: string;
 }
 
@@ -93,15 +78,16 @@ export const Tunnel = {
     );
   },
 
+  /** A name for this device, so the report can tell the devices apart. */
+  defaultDevice(): Promise<string> {
+    return NativeTunnel.defaultDevice();
+  },
+
   onStateChanged(
     callback: (state: TunnelState, message: string) => void,
   ): EmitterSubscription {
     return emitter.addListener('tunnelState', (event: any) =>
       callback(event.state, event.message),
     );
-  },
-
-  onFlow(callback: (flow: FlowInfo) => void): EmitterSubscription {
-    return emitter.addListener('tunnelFlow', (event: any) => callback(event));
   },
 };

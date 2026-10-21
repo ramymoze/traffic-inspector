@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -12,32 +12,48 @@ import {
   View,
 } from 'react-native';
 import { theme } from '../theme';
-import { FlowInfo, Tunnel, TunnelState } from '../native/Tunnel';
+import { Tunnel, TunnelState } from '../native/Tunnel';
 
-function human(size: number): string {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
+type Palette = {
+  dot: string;
+  card: string;
+  border: string;
+};
 
-const STATE_COLORS: Record<TunnelState, string> = {
-  idle: theme.textFaint,
-  connecting: theme.warn,
-  connected: theme.ok,
-  error: theme.error,
-  stopped: theme.textFaint,
+const PALETTE: Record<TunnelState, Palette> = {
+  idle: {
+    dot: theme.textFaint,
+    card: theme.surface,
+    border: theme.border,
+  },
+  connecting: {
+    dot: theme.warn,
+    card: theme.warnSoft,
+    border: '#4A3D1A',
+  },
+  connected: {
+    dot: theme.ok,
+    card: theme.okSoft,
+    border: '#1E4632',
+  },
+  error: {
+    dot: theme.error,
+    card: theme.errorSoft,
+    border: '#4A2424',
+  },
+  stopped: {
+    dot: theme.textFaint,
+    card: theme.surface,
+    border: theme.border,
+  },
 };
 
 const STATE_TEXT: Record<TunnelState, string> = {
   idle: 'not connected',
   connecting: 'connecting',
   connected: 'connected',
-  error: 'error',
-  stopped: 'stopped',
+  error: 'not connected',
+  stopped: 'not connected',
 };
 
 function Field(props: {
@@ -45,15 +61,23 @@ function Field(props: {
   value: string;
   onChangeText: (text: string) => void;
   placeholder?: string;
-  secure?: boolean;
+  secret?: boolean;
   keyboardType?: 'default' | 'numeric';
   hint?: string;
+  editable?: boolean;
 }) {
-  const [hidden, setHidden] = useState(Boolean(props.secure));
+  const [hidden, setHidden] = useState(Boolean(props.secret));
+  const [focused, setFocused] = useState(false);
+
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{props.label}</Text>
-      <View style={styles.inputRow}>
+      <View
+        style={[
+          styles.inputRow,
+          focused ? styles.inputRowFocused : null,
+          props.editable === false ? styles.inputRowLocked : null,
+        ]}>
         <TextInput
           style={styles.input}
           value={props.value}
@@ -63,10 +87,16 @@ function Field(props: {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType={props.keyboardType ?? 'default'}
-          secureTextEntry={Boolean(props.secure) && hidden}
+          secureTextEntry={Boolean(props.secret) && hidden}
+          editable={props.editable !== false}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
         />
-        {props.secure ? (
-          <Pressable onPress={() => setHidden(!hidden)} style={styles.reveal}>
+        {props.secret ? (
+          <Pressable
+            onPress={() => setHidden(!hidden)}
+            style={styles.reveal}
+            hitSlop={{ top: 12, bottom: 12 }}>
             <Text style={styles.revealText}>{hidden ? 'show' : 'hide'}</Text>
           </Pressable>
         ) : null}
@@ -76,55 +106,25 @@ function Field(props: {
   );
 }
 
-function FlowRow(props: { flow: FlowInfo }) {
-  const { flow } = props;
-  const color = flow.proto === 'UDP' ? theme.udp : theme.tcp;
-  return (
-    <View style={styles.flow}>
-      <View style={styles.flowTop}>
-        <Text style={[styles.proto, { color }]}>{flow.proto}</Text>
-        <Text style={styles.destination} numberOfLines={1}>
-          {flow.dstIp}:{flow.dstPort}
-        </Text>
-        <Text style={styles.service}>{flow.service}</Text>
-        <Text style={styles.time}>{flow.at}</Text>
-      </View>
-      <View style={styles.flowBottom}>
-        <Text style={styles.source} numberOfLines={1}>
-          from {flow.srcIp}:{flow.srcPort}
-        </Text>
-        <Text style={styles.bytes}>
-          ↑ {human(flow.bytesUp)}  ↓ {human(flow.bytesDown)}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 export default function ConnectScreen() {
   const [server, setServer] = useState('');
   const [port, setPort] = useState('5555');
   const [key, setKey] = useState('');
-  const [device, setDevice] = useState('phone-android');
+  const [device, setDevice] = useState('');
   const [state, setState] = useState<TunnelState>('idle');
   const [message, setMessage] = useState('');
-  const [flows, setFlows] = useState<FlowInfo[]>([]);
   const [busy, setBusy] = useState(false);
-  const keyInput = useRef<TextInput>(null);
+  const started = useRef(false);
 
   useEffect(() => {
-    const stateSub = Tunnel.onStateChanged((newState, newMessage) => {
+    const subscription = Tunnel.onStateChanged((newState, newMessage) => {
       setState(newState);
       setMessage(newMessage);
-    });
-    const flowSub = Tunnel.onFlow(flow => {
-      setFlows(current => [flow, ...current].slice(0, 100));
     });
     Tunnel.status()
       .then(status => {
         setState(status.state);
         setMessage(status.message);
-        setFlows(status.flows ?? []);
       })
       .catch(() => undefined);
     Tunnel.getConfig()
@@ -140,38 +140,38 @@ export default function ConnectScreen() {
         }
         if (config?.device) {
           setDevice(config.device);
+        } else if (!started.current) {
+          Tunnel.defaultDevice().then(name => setDevice(name));
         }
       })
       .catch(() => undefined);
-    return () => {
-      stateSub.remove();
-      flowSub.remove();
-    };
+    return () => subscription.remove();
   }, []);
 
   // remember the settings, so the key does not have to be typed again
   useEffect(() => {
     const timer = setTimeout(() => {
       Tunnel.setConfig({
-        server,
+        server: server.trim(),
         port: parseInt(port, 10) || 5555,
-        key,
-        device,
+        key: key.trim(),
+        device: device.trim(),
       }).catch(() => undefined);
-    }, 500);
+    }, 400);
     return () => clearTimeout(timer);
   }, [server, port, key, device]);
 
-  const connected = state === 'connected' || state === 'connecting';
+  const connected = state === 'connected';
+  const working = state === 'connecting';
+  const palette = PALETTE[state] ?? PALETTE.idle;
 
   const onConnect = useCallback(async () => {
     setBusy(true);
+    setMessage('');
     try {
       const ready = await Tunnel.prepare();
       if (!ready) {
-        setState('idle');
         setMessage('the permission was not given');
-        setBusy(false);
         return;
       }
       await Tunnel.start({
@@ -199,32 +199,47 @@ export default function ConnectScreen() {
     }
   }, []);
 
-  const header = useMemo(
-    () => (
-      <View>
+  const canStart = server.trim().length > 0 && key.trim().length > 0;
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.background} />
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
           <Text style={styles.title}>Traffic Inspector</Text>
           <Text style={styles.subtitle}>
-            the traffic of this device goes through your server
+            put the traffic of this phone through your own server
           </Text>
         </View>
 
-        <View style={styles.card}>
+        <View
+          style={[
+            styles.statusCard,
+            { backgroundColor: palette.card, borderColor: palette.border },
+          ]}>
           <View style={styles.statusRow}>
-            <View
-              style={[
-                styles.dot,
-                { backgroundColor: STATE_COLORS[state] ?? theme.textFaint },
-              ]}
-            />
+            <View style={[styles.dot, { backgroundColor: palette.dot }]} />
             <Text style={styles.statusText}>{STATE_TEXT[state] ?? state}</Text>
-            <View style={styles.spacer} />
-            {state === 'connecting' ? (
-              <ActivityIndicator size="small" color={theme.warn} />
+            {working ? (
+              <ActivityIndicator
+                size="small"
+                color={palette.dot}
+                style={styles.statusSpinner}
+              />
             ) : null}
           </View>
-          {message ? <Text style={styles.message}>{message}</Text> : null}
+          {message ? (
+            <Text style={styles.statusMessage} numberOfLines={3}>
+              {message}
+            </Text>
+          ) : null}
+        </View>
 
+        <View style={styles.card}>
           <Field
             label="server"
             value={server}
@@ -246,7 +261,7 @@ export default function ConnectScreen() {
                 label="name of the device"
                 value={device}
                 onChangeText={setDevice}
-                placeholder="phone-android"
+                placeholder="phone"
               />
             </View>
           </View>
@@ -254,52 +269,38 @@ export default function ConnectScreen() {
             label="master key"
             value={key}
             onChangeText={setKey}
-            placeholder="the shared secret of the server"
-            secure
-            hint="the same key the server has, 64 characters"
+            placeholder="the shared secret"
+            secret
+            hint="the same key the server has, it is in the .env file of the server"
           />
-
-          <Pressable
-            style={[
-              styles.button,
-              connected ? styles.buttonOff : styles.buttonOn,
-              busy ? styles.buttonBusy : null,
-            ]}
-            onPress={connected ? onDisconnect : onConnect}
-            disabled={busy}>
-            <Text style={styles.buttonText}>
-              {connected ? 'stop the tunnel' : 'start the tunnel'}
-            </Text>
-          </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>
-          the traffic right now{flows.length ? ` (${flows.length})` : ''}
-        </Text>
-      </View>
-    ),
-    [state, message, server, port, key, device, busy, connected, flows.length],
-  );
+        <Pressable
+          style={[
+            styles.button,
+            connected ? styles.buttonStop : styles.buttonStart,
+            !connected && !canStart ? styles.buttonDisabled : null,
+          ]}
+          onPress={connected ? onDisconnect : onConnect}
+          disabled={busy || (!connected && !canStart)}>
+          <Text
+            style={[
+              styles.buttonText,
+              connected ? styles.buttonTextStop : styles.buttonTextStart,
+            ]}>
+            {connected
+              ? 'stop the tunnel'
+              : working
+              ? 'connecting ...'
+              : 'start the tunnel'}
+          </Text>
+        </Pressable>
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <StatusBar barStyle="light-content" backgroundColor={theme.background} />
-      <FlatList
-        data={flows}
-        keyExtractor={item => `${item.flowId}-${item.at}-${item.dstIp}`}
-        renderItem={({ item }) => <FlowRow flow={item} />}
-        ListHeaderComponent={header}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>
-              nothing yet — the flows of the device show up here
-            </Text>
-          </View>
-        }
-        contentContainerStyle={styles.content}
-      />
+        <Text style={styles.footer}>
+          Everything this phone sends goes through your server.  The server
+          writes it into a file you can read at any time.
+        </Text>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -314,12 +315,12 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
   hero: {
+    marginTop: 14,
     marginBottom: 22,
-    marginTop: 12,
   },
   title: {
     color: theme.text,
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
   },
@@ -327,174 +328,136 @@ const styles = StyleSheet.create({
     color: theme.textDim,
     fontSize: 14,
     marginTop: 6,
+    lineHeight: 20,
   },
-  card: {
-    backgroundColor: theme.surface,
-    borderRadius: 16,
+  statusCard: {
+    borderRadius: theme.radius,
     borderWidth: 1,
-    borderColor: theme.border,
-    padding: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 14,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
   },
   dot: {
     width: 9,
     height: 9,
     borderRadius: 5,
-    marginRight: 9,
+    marginRight: 10,
   },
   statusText: {
     color: theme.text,
     fontSize: 15,
     fontWeight: '600',
   },
-  spacer: {
-    flex: 1,
+  statusSpinner: {
+    marginLeft: 10,
   },
-  message: {
+  statusMessage: {
     color: theme.textDim,
-    fontSize: 13,
-    marginBottom: 14,
+    fontSize: 12.5,
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  card: {
+    backgroundColor: theme.surface,
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: theme.border,
+    padding: 16,
+    paddingBottom: 10,
   },
   field: {
-    marginTop: 12,
+    marginBottom: 14,
   },
   label: {
     color: theme.textFaint,
-    fontSize: 11,
+    fontSize: 10.5,
     textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 6,
+    letterSpacing: 1.1,
+    marginBottom: 7,
+    fontWeight: '600',
   },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: theme.surfaceHigh,
+    borderRadius: theme.radiusSmall,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  inputRowFocused: {
+    borderColor: theme.borderFocus,
+  },
+  inputRowLocked: {
+    opacity: 0.5,
   },
   input: {
     flex: 1,
-    backgroundColor: theme.surfaceHigh,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
     color: theme.text,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
     fontSize: 15,
     fontFamily: theme.mono,
   },
   reveal: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
   },
   revealText: {
     color: theme.accent,
     fontSize: 13,
+    fontWeight: '600',
   },
   hint: {
     color: theme.textFaint,
-    fontSize: 11,
-    marginTop: 5,
+    fontSize: 11.5,
+    marginTop: 6,
+    lineHeight: 16,
   },
   row: {
     flexDirection: 'row',
-    marginTop: 4,
+    marginBottom: 0,
   },
   rowItem: {
     flex: 1,
-    marginRight: 10,
+    marginRight: 12,
   },
   button: {
-    marginTop: 20,
-    borderRadius: 12,
-    paddingVertical: 14,
+    marginTop: 18,
+    borderRadius: theme.radiusSmall,
+    paddingVertical: 16,
     alignItems: 'center',
   },
-  buttonOn: {
+  buttonStart: {
     backgroundColor: theme.accent,
   },
-  buttonOff: {
-    backgroundColor: theme.surfaceHigh,
+  buttonStop: {
+    backgroundColor: 'transparent',
     borderWidth: 1,
     borderColor: theme.error,
   },
-  buttonBusy: {
-    opacity: 0.6,
+  buttonDisabled: {
+    opacity: 0.4,
   },
   buttonText: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  buttonTextStart: {
     color: theme.background,
-    fontSize: 15,
-    fontWeight: '700',
   },
-  sectionTitle: {
-    color: theme.textDim,
-    fontSize: 13,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginTop: 26,
-    marginBottom: 10,
+  buttonTextStop: {
+    color: theme.error,
   },
-  flow: {
-    backgroundColor: theme.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.border,
-    padding: 12,
-    marginBottom: 8,
-  },
-  flowTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  proto: {
-    fontSize: 11,
-    fontWeight: '700',
-    width: 34,
-  },
-  destination: {
-    color: theme.text,
-    fontSize: 14,
-    fontFamily: theme.mono,
-    flex: 1,
-  },
-  service: {
-    color: theme.textDim,
-    fontSize: 12,
-    marginRight: 10,
-  },
-  time: {
+  footer: {
     color: theme.textFaint,
     fontSize: 12,
-    fontFamily: theme.mono,
-  },
-  flowBottom: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  source: {
-    color: theme.textFaint,
-    fontSize: 11,
-    fontFamily: theme.mono,
-    flex: 1,
-  },
-  bytes: {
-    color: theme.textDim,
-    fontSize: 11,
-    fontFamily: theme.mono,
-  },
-  empty: {
-    padding: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: theme.border,
-  },
-  emptyText: {
-    color: theme.textFaint,
-    fontSize: 13,
+    lineHeight: 18,
     textAlign: 'center',
+    marginTop: 22,
   },
 });

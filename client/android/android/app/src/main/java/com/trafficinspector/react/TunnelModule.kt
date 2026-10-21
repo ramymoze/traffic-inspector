@@ -27,7 +27,6 @@ class TunnelModule(reactContext: ReactApplicationContext) :
     companion object {
         const val NAME = "Tunnel"
         const val EVENT_STATE = "tunnelState"
-        const val EVENT_FLOW = "tunnelFlow"
         const val REQUEST_CODE = 4242
     }
 
@@ -139,10 +138,13 @@ class TunnelModule(reactContext: ReactApplicationContext) :
         result.putString("state", TunnelService.state)
         result.putString("message", TunnelService.message)
         result.putString("device", TunnelService.device)
-        val flows = Arguments.createArray()
-        TunnelService.flows.forEach { flows.pushMap(Arguments.makeNativeMap(it.toMap())) }
-        result.putArray("flows", flows)
         promise.resolve(result)
+    }
+
+    /** A name for this device, so the report can tell the devices apart. */
+    @ReactMethod
+    fun defaultDevice(promise: Promise) {
+        promise.resolve(TunnelService.defaultDevice())
     }
 
     /** The settings of the tunnel, they should survive a restart. */
@@ -183,10 +185,6 @@ class TunnelModule(reactContext: ReactApplicationContext) :
         payload.putString("state", state)
         payload.putString("message", message)
         send(EVENT_STATE, payload)
-    }
-
-    override fun onFlow(flow: TunnelService.FlowInfo) {
-        send(EVENT_FLOW, flow.toMap())
     }
 
     private fun send(event: String, payload: Any) {

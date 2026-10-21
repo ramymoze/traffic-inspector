@@ -1,18 +1,26 @@
-/** The colours of the app. */
+/** The colours and the measures of the app. */
 export const theme = {
-  background: '#0B0F14',
-  surface: '#141A22',
-  surfaceHigh: '#1C242F',
-  border: '#232D3A',
-  text: '#E6EDF5',
-  textDim: '#8A98A8',
-  textFaint: '#5A6878',
+  background: '#0A0E14',
+  surface: '#131A24',
+  surfaceHigh: '#1B2430',
+  border: '#243040',
+  borderFocus: '#4C8DFF',
+
+  text: '#E8EFF7',
+  textDim: '#93A1B3',
+  textFaint: '#5C6B7E',
+
   accent: '#4C8DFF',
-  accentDim: '#1E3A66',
-  ok: '#3FB950',
-  warn: '#D29922',
-  error: '#F85149',
-  tcp: '#58A6FF',
-  udp: '#A371F7',
+  accentSoft: '#16243A',
+
+  ok: '#3FD07A',
+  okSoft: '#10251A',
+  warn: '#E3B341',
+  warnSoft: '#2A2211',
+  error: '#FF6B6B',
+  errorSoft: '#2A1414',
+
+  radius: 16,
+  radiusSmall: 12,
   mono: 'monospace',
 };

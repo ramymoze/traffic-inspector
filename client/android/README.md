@@ -23,6 +23,10 @@ android/app/src/main/java/com/trafficinspector/
     └── TunnelPackage.kt
 ```
 
+The screen does one thing: it connects the phone to the server.  There is no
+list of flows and no log in the app - the traffic belongs to the server, in
+`traffic.csv`.
+
 ## How it works
 
 The Android kernel is the client of every TCP connection, the app plays the

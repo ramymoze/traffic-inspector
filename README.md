@@ -164,10 +164,15 @@ Then open it and fill in three things:
 | **server** | the address of your server, for example `192.168.100.8` |
 | **port** | `5555` |
 | **master key** | the key from the `.env` of the server |
-| **name of the device** | for example `pixel8-android`, so the report can tell the devices apart |
+| **name of the device** | for example `pixel-8`, so the report can tell the devices apart |
 
 Press **start the tunnel** and let the system ask for the permission.  After
-that the flows of the phone show up in the app and in `traffic.csv`.
+that the status of the app turns green and the traffic of the phone shows up
+in the CSV of the server.
+
+The app does one thing: it connects the phone to your server.  There is no
+list of flows and no log in it - the traffic is on the server, in
+`traffic.csv`.
 
 More, including how to reach the server from mobile data and a
 troubleshooting table: **[DEVICE_TEST.md](DEVICE_TEST.md)**.

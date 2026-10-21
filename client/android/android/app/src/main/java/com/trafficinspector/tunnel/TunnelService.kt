@@ -27,36 +27,6 @@ class TunnelService : VpnService() {
     /** Told when something happens, so the app can show it. */
     interface Listener {
         fun onStateChanged(state: String, message: String)
-        fun onFlow(flow: FlowInfo)
-    }
-
-    /** One flow of the device. */
-    class FlowInfo(
-        val flowId: Int,
-        val srcIp: String,
-        val srcPort: Int,
-        val dstIp: String,
-        val dstPort: Int,
-        val proto: String,
-        val service: String,
-        val bytesUp: Int,
-        val bytesDown: Int,
-        val flowState: String,
-        val at: String
-    ) {
-        fun toMap(): Map<String, Any> = mapOf(
-            "flowId" to flowId,
-            "srcIp" to srcIp,
-            "srcPort" to srcPort,
-            "dstIp" to dstIp,
-            "dstPort" to dstPort,
-            "proto" to proto,
-            "service" to service,
-            "bytesUp" to bytesUp,
-            "bytesDown" to bytesDown,
-            "state" to flowState,
-            "at" to at
-        )
     }
 
     companion object {
@@ -106,24 +76,26 @@ class TunnelService : VpnService() {
         @Volatile
         var device: String = ""
 
-        /** The flows that were opened, newest first. */
-        val flows = CopyOnWriteArrayList<FlowInfo>()
-
         /** Told when something happens, so the app can show it. */
         val listeners = CopyOnWriteArrayList<Listener>()
+
+        /** A name for this device, so the report can tell the devices apart. */
+        fun defaultDevice(): String {
+            var model = (android.os.Build.MODEL ?: "").trim()
+            if (model.contains("SDK", ignoreCase = true)) {
+                // the emulator calls itself "Android SDK built for x86_64"
+                model = model.substringBefore("SDK").trim()
+            }
+            if (model.isEmpty()) {
+                model = "android"
+            }
+            return model.lowercase().replace(" ", "-").take(14)
+        }
 
         private fun publish(newState: String, newMessage: String) {
             state = newState
             message = newMessage
             listeners.forEach { it.onStateChanged(newState, newMessage) }
-        }
-
-        private fun publishFlow(flow: FlowInfo) {
-            flows.add(0, flow)
-            while (flows.size > 100) {
-                flows.removeAt(flows.size - 1)
-            }
-            listeners.forEach { it.onFlow(flow) }
         }
     }
 
@@ -211,57 +183,6 @@ class TunnelService : VpnService() {
                     TAG,
                     "flow ${flow.tunnelFlow.flowId}: ${flow.key.srcIp}:${flow.key.srcPort} -> " +
                         "${flow.key.dstIp}:${flow.key.dstPort}"
-                )
-                publishFlow(
-                    FlowInfo(
-                        flow.tunnelFlow.flowId,
-                        flow.key.srcIp,
-                        flow.key.srcPort,
-                        flow.key.dstIp,
-                        flow.key.dstPort,
-                        "TCP",
-                        serviceOf(flow.key.dstPort),
-                        0,
-                        0,
-                        "active",
-                        now()
-                    )
-                )
-            }
-
-            override fun onFlowClosed(flow: TcpFlow, reason: String) {
-                publishFlow(
-                    FlowInfo(
-                        flow.tunnelFlow.flowId,
-                        flow.key.srcIp,
-                        flow.key.srcPort,
-                        flow.key.dstIp,
-                        flow.key.dstPort,
-                        "TCP",
-                        serviceOf(flow.key.dstPort),
-                        flow.tunnelFlow.bytesOut,
-                        flow.tunnelFlow.bytesIn,
-                        "closed",
-                        now()
-                    )
-                )
-            }
-
-            override fun onUdpFlowOpened(flow: UdpFlow) {
-                publishFlow(
-                    FlowInfo(
-                        flow.tunnelFlow.flowId,
-                        flow.key.srcIp,
-                        flow.key.srcPort,
-                        flow.key.dstIp,
-                        flow.key.dstPort,
-                        "UDP",
-                        serviceOf(flow.key.dstPort),
-                        0,
-                        0,
-                        "active",
-                        now()
-                    )
                 )
             }
         }

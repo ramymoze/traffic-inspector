@@ -3,75 +3,45 @@
 A VPN server you run yourself, that shows you in plaintext what a device
 connected to it is really doing.
 
-The device routes all of its traffic through the tunnel to your server.  The
-server terminates the encrypted tunnel, relays the traffic to the real
-internet, and records everything it saw:
+The device sends all of its traffic through an encrypted tunnel to your
+server.  The server terminates the tunnel, relays the traffic to the real
+internet and records everything it saw:
 
-* a CSV file with one row per flow - source, destination, port, service, byte
-  counts and the time of day
-* a verbose log in the terminal, live
+* **a CSV file**, one row per flow - source, destination, port, service, byte
+  counts in both directions and the time of the day
+* **a verbose log** in the terminal, live
+* **a report** that says what is worth a look
 
-That combination is what makes the two interesting cases visible:
+That is what makes the two interesting cases visible:
 
 * a connection to an **unknown destination on an odd port**
 * a **sustained upload in the middle of the night** (a camera, for example)
 
-## Current state
+---
 
-Phase 1 of the plan is done:
+## What you need
 
-* the tunnel works end to end (server + a stub client)
-* the protocol was rewritten so several destinations can be used at the same
-  time, replies are matched to their flow, and the data is chunked properly
-* the transport is encrypted with AES-256-GCM and a per session key
-* the server runs as a plain user process on Windows and Linux
-* the inspector writes `traffic.csv` and the terminal shows a live log
-
-The **clients** (the part that turns a phone or a laptop into a VPN client)
-are phase 2 and 3 and are not written yet.  The stub client
-(`testing.py`) is enough to drive the server and to fill the CSV.
-
-## Install
+| | |
+|---|---|
+| **The server** | Python 3.9+ and `pycryptodome`.  Runs on Windows and Linux, as a plain user process - no root, no drivers. |
+| **The emulator** | The Android SDK with the emulator and a system image (see [below](#the-emulator)).  Only needed for `start-emulator.bat`. |
+| **A phone** | The app, built from this project.  Or any device that can run the Python client. |
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Only `pycryptodome` is needed at runtime.  `scapy` was used by the old
-version and is no longer required.
+---
 
-## Run the server
+## The two commands
 
-```bash
-python listeningServer.py --port 5555 --csv traffic.csv
-```
-
-Options:
-
-| Option | Meaning |
-|---|---|
-| `--host` | address to bind, default `0.0.0.0` |
-| `--port` | UDP port, default `5555` |
-| `--csv` | file to write, default `traffic.csv` |
-| `--key-file` | file holding the master key, default `.env` |
-| `--level` | `quiet`, `normal` or `verbose` (default `verbose`) |
-| `--max-flows` | maximum simultaneous flows, default 512 |
-| `--session-timeout` | drop an idle client after N seconds, default 300 |
-
-The master key is created automatically in `.env` the first time the server
-runs.  **It is a secret**: anybody who has it can use your tunnel.  The file
-is already in `.gitignore`.
-
-## Run it
-
-Two commands, in the root of the project.  Double click them, or run them
-from a terminal.
+Both are in the root of the project.  Double click them, or run them from a
+terminal.
 
 ### `start-server.bat`
 
-Starts the server and waits for a phone to connect.  It prints what the
-phone needs: the address of this machine, the master key and how to get the
-app onto the phone.
+Starts the server and waits for a phone to connect.  It prints everything
+the phone needs:
 
 ```
 ========================================================================
@@ -79,7 +49,7 @@ app onto the phone.
 ========================================================================
 
   csv file      : C:\...\traffic-inspector\traffic.csv
-  master key    : 1b4e6f95...
+  master key    : 1b4e6f9544237b199a73a96b7bb65def2be360a97f15dab950ad761bc27a6c66
 
   the phone has to reach this machine:
     on the same wifi : 192.168.100.8:5555
@@ -87,184 +57,240 @@ app onto the phone.
     over the internet: 154.248.244.77:5555  (needs a port forward)
 
   [!] the firewall may block the port. As administrator run:
-      netsh advfirewall firewall add rule name="traffic-inspector" ...
+      netsh advfirewall firewall add rule name="traffic-inspector" dir=in action=allow protocol=UDP localport=5555
+
+  On the phone:
+    1. build the app:  cd client/android/android && gradlew assembleRelease
+    2. copy it over:   adb install -r app-release.apk
+    3. open it, fill in the address and the key, press start
 ```
+
+The master key is created automatically in `.env` the first time.  **It is a
+secret** - anybody who has it can use your tunnel.  The file is in
+`.gitignore`.
+
+The firewall rule needs an elevated terminal (right click the terminal, *Run
+as administrator*).  Without it the phone cannot reach the server on your
+network.
 
 ### `start-emulator.bat`
 
-Starts the emulator **and** the server, installs the app in it, fills in
-the settings and starts the tunnel.  One command, and the traffic of the
-virtual machine shows up in `traffic.csv` right away.
+Starts the emulator **and** the server in one go: it brings up the virtual
+machine, builds and installs the app, writes the settings into it, presses
+*start the tunnel* and waits.  The traffic of the virtual machine shows up
+in `traffic.csv` right away:
+
+```
+[*] starting the emulator, it takes a moment ...
+[*] waiting for the emulator ...
+[*] the app is installed
+[*] the app is running, the tunnel should be up
+[+] Client connected: 127.0.0.1:65246 (session 68b3c2465996202a, device emulator-android)
+[TUNNEL] 10.8.0.1:32793 -> 8.8.8.8:53 (UDP/domain)
+```
 
 Both take the same options, for example `start-server.bat --port 5556`.
 
-## The clients
+---
 
-| Client | What it is | State |
-|---|---|---|
-| `client/bridge.py` | the TCP bridge of the desktop client | done |
-| `client/tun_linux.py` | the TUN device of Linux, the routes, the resolver | done |
-| `client/main.py` | the command line client for Linux | done |
-| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel | done |
-| `client/android` | the app for a phone: React Native in front, Kotlin behind | in progress |
-
-### The Android app
-
-The phone is the device of the original story.  The user interface is React
-Native, the tunnel is Kotlin:
-
-```
-client/android/
-├── src/                    the user interface (React Native)
-│   ├── native/Tunnel.ts    the typed wrapper around the native module
-│   └── screens/ConnectScreen.tsx
-└── android/app/src/main/java/com/trafficinspector/
-    ├── tunnel/             the tunnel, no react native in here
-    │   ├── IpStack.kt      the IPv4 / TCP codec
-    │   ├── TunnelClient.kt the frames, the handshake, AES-256-GCM
-    │   ├── TcpBridge.kt    the TCP state machine
-    │   └── TunnelService.kt the VpnService
-    └── react/              the bridge to the user interface
-```
-
-The Android kernel is the client of every TCP connection and the app plays
-the server side of it, exactly like the desktop client.  Only the payload
-goes through the tunnel.
-
-See **[client/android/README.md](client/android/README.md)** for the build
-and the use.
-
-## The Linux client
+## The server
 
 ```bash
-# on the server
 python listeningServer.py --port 5555 --csv traffic.csv
+```
 
-# on the device, as root: it needs the interface and the routes
+| Option | Meaning |
+|---|---|
+| `--host` | address to bind, default `0.0.0.0` |
+| `--port` | UDP port, default `5555` |
+| `--csv` | the file to write, default `traffic.csv` |
+| `--key-file` | the file with the master key, default `.env` |
+| `--level` | `quiet`, `normal` or `verbose` (default `verbose`) |
+| `--max-flows` | maximum simultaneous flows, default 2048 |
+| `--session-timeout` | drop an idle client after N seconds, default 300 |
+
+The live log looks like this:
+
+```
+[*] Tunnel is active at 0.0.0.0:5555
+[+] Client connected: 192.168.1.55:60733 (session 0e63a139, device pixel8-android)
+[TUNNEL] 10.8.0.1:52344 -> 142.251.150.119:80 (TCP/http)
+[+] Handshake complete! Data sent to internet.
+[>] Payload sent to 142.251.150.119:80 (71 bytes)
+[<--] RESPONSE from Internet (5648 bytes)
+[*] Closing session for 10.8.0.1:52344
+```
+
+---
+
+## The app on a phone
+
+The app is in `client/android`.  The user interface is React Native, the
+tunnel is Kotlin.
+
+```bash
+# build it
+cd client/android/android
+./gradlew assembleRelease
+
+# put it on the phone
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
+Then open it and fill in three things:
+
+| | |
+|---|---|
+| **server** | the address of your server, for example `192.168.100.8` |
+| **port** | `5555` |
+| **master key** | the key from the `.env` of the server |
+| **name of the device** | for example `pixel8-android`, so the report can tell the devices apart |
+
+Press **start the tunnel** and let the system ask for the permission.  After
+that the flows of the phone show up in the app and in `traffic.csv`.
+
+More, including how to reach the server from mobile data and a
+troubleshooting table: **[DEVICE_TEST.md](DEVICE_TEST.md)**.
+
+---
+
+## The emulator
+
+Without a phone the app can be tried on the emulator.  The pieces:
+
+```bash
+# the sdk
+sdkmanager "platform-tools" "emulator" "platforms;android-35" "build-tools;35.0.0"
+sdkmanager "system-images;android-34;google_apis;x86_64"
+
+# a virtual device
+avdmanager create avd -n ti-test -k "system-images;android-34;google_apis;x86_64" -d pixel_5
+
+# start it
+emulator -avd ti-test -no-audio -no-boot-anim
+```
+
+The emulator reaches the machine it runs on at `10.0.2.2`, so that is the
+address for the server.  `start-emulator.bat` does all of this for you.
+
+The emulator is a computer, not a phone: its browser uses DNS over HTTPS and
+its network stack is not the one of a real device.  It is good enough to see
+that everything works, a real phone is the honest test.
+
+---
+
+## The other clients
+
+| Client | What it is |
+|---|---|
+| `client/android` | the app for a phone, React Native in front and Kotlin behind |
+| `client/main.py` | the command line client for Linux, it uses a TUN device |
+| `client/socks.py` | a SOCKS5 proxy that puts a browser through the tunnel |
+| `testing.py` | a small stub, it opens one flow and prints the answer |
+
+The Linux client needs root, it creates the interface and the routes:
+
+```bash
 sudo python -m client.main --server <the address of the server> --port 5555 \
      --tun ti0 --address 10.8.0.1/24 --dns 8.8.8.8
 ```
 
-Everything the machine sends now goes through the tunnel and shows up in
-`traffic.csv`.  The setup of the test machine is in
-**[tools/VM_SETUP.md](tools/VM_SETUP.md)**.
-
-## Test it with a real device
-
-One command starts the server, prints what your device needs, waits for the
-device to connect, shows the live log and finally prints the CSV, the report
-and a list of checks:
+The SOCKS5 client works everywhere Python does, and only covers what is
+pointed at the proxy:
 
 ```bash
-python tools/device_test.py
+python -m client.socks --server <the address of the server> --port 5555 --device pixel8-android
+# in the browser: socks5://127.0.0.1:1080
 ```
 
-On the device, run the SOCKS5 client and point a browser at it:
+---
 
-```bash
-python -m client.socks --server <address of the server> --port 5555
-# then in the browser: socks5://127.0.0.1:1080
-```
-
-Everything the browser does then travels through the tunnel and shows up in
-`traffic.csv`.  The full walkthrough, including how to reach the server from
-mobile data and a troubleshooting table, is in **[DEVICE_TEST.md](DEVICE_TEST.md)**.
-
-Each client names itself, so the report can tell the devices apart:
-
-```bash
-python -m client.socks --server <address of the server> --port 5555 --device pixel8-android
-```
-
-## Drive it with the stub client
-
-```bash
-python testing.py www.google.com 80       # a TCP flow, prints the answer
-python testing.py example.com 443         # a plain TCP connect
-python testing.py 1.1.1.1 53 --udp        # a UDP flow
-```
-
-The server prints something like:
+## How it works
 
 ```
-[*] Tunnel is active at 0.0.0.0:5555
-[*] Monitoring Tunnel and Internet sessions...
-[+] Client connected: 127.0.0.1:54333 (session 59762bd684aeb3a1)
-[TUNNEL] 10.8.0.2:52344 -> 142.251.150.119:80 (TCP/http)
-[+] Handshake complete! Data sent to internet.
-[>] Payload sent to 142.251.150.119:80 (71 bytes)
-[<--] RESPONSE from Internet (5648 bytes)
-[*] Closing session for 10.8.0.2:52344
+   the device                        your server
+ ┌──────────────────┐             ┌────────────────────────────┐
+ │ the app          │  encrypted  │  the tunnel               │
+ │  or the client   │─────UDP────►│   relay                   │
+ │                  │             │   inspector → traffic.csv │
+ └──────────────────┘             └────────────────────────────┘
 ```
 
-and the CSV gets one row:
+The client **terminates** the TCP connection of the operating system and
+**proxies** it through the tunnel.  Only the payload crosses the tunnel, the
+sequence numbers never leave the device.  That is why the server needs
+nothing but a socket per flow.
+
+The tunnel is encrypted with AES-256-GCM.  Every connection does a handshake
+with the shared master key and gets a key of its own.  The frames are
+described in **[PROTOCOL.md](PROTOCOL.md)**.
+
+---
+
+## The CSV
+
+One row per flow:
 
 ```
 flow_id,ts_start,ts_end,time_of_day,duration_s,client_id,device,tunnel_src,tunnel_src_port,src_ip,src_port,dst_ip,dst_port,dst_name,proto,service,bytes_up,bytes_down,state,note
-1,2026-10-20T04:22:29+02:00,,04:22:29,0.256,59762bd684aeb3a1,linux-ti-vm,127.0.0.1,54333,10.8.0.2,52344,142.251.150.119,80,www.google.com,TCP,http,71,88216,closed,
+1,2026-10-21T02:55:33+02:00,,02:55:33,5.036,68b3c2465996202a,emulator-android,127.0.0.1,65246,10.8.0.1,32793,8.8.8.8,53,,UDP,domain,78,178,active,
 ```
 
 | Column | Meaning |
 |---|---|
 | `ts_start` / `ts_end` | ISO timestamps, empty while the flow is alive |
 | `time_of_day` | local `HH:MM:SS` - the column that answers *"it happened at 2am"* |
-| `client_id` | the session the flow belongs to, random and different for every connection |
+| `client_id` | the session, random and different for every connection |
 | `device` | the name the client gave itself, so one device can be followed over time |
 | `tunnel_src` | the public address of the device |
 | `src_ip` / `src_port` | the address the destination actually saw |
 | `dst_ip` / `dst_port` | the destination |
 | `dst_name` | the host name, when the client sent one |
-| `service` | the well known service for that port, `Unknown (port)` otherwise |
+| `proto` / `service` | TCP or UDP, and the well known service of that port |
 | `bytes_up` | device -> internet (an upload, a camera) |
 | `bytes_down` | internet -> device |
 | `state` | `connecting`, `active`, `closed` or `error` |
 | `note` | why the flow was closed, when there is a reason |
 
-The name of the device is set with `--device` and defaults to the system and
-the hostname, for example `linux-ti-vm` or `windows-desktop`:
-
 The file is rewritten atomically about once a second, so it is safe to read
 while the server runs.
 
-## Analyse the CSV
+---
+
+## The report
 
 ```bash
 python tools/analyze.py --csv traffic.csv
 ```
 
-The report lists the destinations, the ports and services, the activity per
-hour of the day, whatever happened during the quiet hours, the long uploads
-and the destinations seen for the first time.
+```
+-- worth a look -------------------------------------------------------
+  1. [HIGH] 30.0 MB uploaded to 198.51.100.7:8081 at 02:14:33, over 5.0 minutes
+       102 KB per second, that looks like a stream
+  2. [MEDIUM] pixel8-android moved 42.0 MB up and 3.5 KB down between 00:00 and 05:00
+  3. [MEDIUM] port 8081 is not a known service (Unknown (8081)), 2 flow(s)
+```
 
-## Tests
+With `--baseline yesterday.csv` only what is *new* is reported, and the exit
+code says whether something needs a look, so it can run in a cron job.
+
+---
+
+## The project
+
+```
+server/          the server: protocol, crypto, proxy, inspector, main loop
+client/          the clients: the tunnel, the bridge, the android app
+tools/           serve.py (the two commands), analyze.py, device_test.py
+tests/           the test suite
+plan             the working plan (not tracked by git)
+PROTOCOL.md      the wire format
+DEVICE_TEST.md   how to test with a phone
+```
+
+The tests:
 
 ```bash
-python -m pytest tests -q
+python -m pytest tests -q                    # the python side
+cd client/android/android && ./gradlew test  # the kotlin side
 ```
-
-## Layout
-
-```
-server/        the server: protocol, crypto, proxy, inspector, main loop
-client/        the client side: tunnel client and the SOCKS5 proxy
-tools/         device_test.py (the real device test) and analyze.py
-tests/         the test suite
-plan           the working plan (not tracked by git)
-DEVICE_TEST.md how to test with a phone or a laptop
-PROTOCOL.md    the wire format
-README.md      this file
-```
-
-## What is next
-
-* **Phase 2** - the desktop client: the TUN device itself (read and write IP
-  packets, routes, DNS rewrite) and the command line client around it.  The
-  TCP bridge, which is the hard part, is done and tested.
-* **Phase 3** - the Android client, a Kotlin `VpnService` application.
-* **Phase 4** - more analysis on top of the CSV.
-
-Until the TUN clients exist, the SOCKS5 client is what makes a real device
-test possible: it captures what goes through a browser, which is enough to
-validate the server, the tunnel and the inspector over a real network.
-
-See the `plan` file for the details.

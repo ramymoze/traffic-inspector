@@ -112,14 +112,34 @@ python listeningServer.py --port 5555 --csv traffic.csv
 The live log looks like this:
 
 ```
-[*] Tunnel is active at 0.0.0.0:5555
-[+] Client connected: 192.168.1.55:60733 (session 0e63a139, device pixel8-android)
-[TUNNEL] 10.8.0.1:52344 -> 142.251.150.119:80 (TCP/http)
+[+] Device connected: demo-phone from 127.0.0.1:64771  (session 54e4585b041b24bf)
+[TUNNEL] demo-phone  192.168.100.8:64771 -> 142.251.156.119:80  (TCP/http)
 [+] Handshake complete! Data sent to internet.
-[>] Payload sent to 142.251.150.119:80 (71 bytes)
-[<--] RESPONSE from Internet (5648 bytes)
-[*] Closing session for 10.8.0.1:52344
+[>] sent 71 B to 142.251.156.119:80  (71 B in total)
+[<--] received 13.8 KB from 142.251.156.119:80  (13.8 KB in total)
+[*] flow closed  demo-phone -> 142.251.156.119:80  (up 71 B, down 87.6 KB, 1.5 s)
+[*] 1 device(s), 1 flow(s), 71 B up, 87.6 KB down
 ```
+
+What the lines mean:
+
+| | |
+|---|---|
+| `[+] Device connected` | a client arrived, with the name it gave itself and the address it came from |
+| `[TUNNEL] device src -> dst (proto/service)` | a connection to a destination, with the port and the service behind it |
+| `[+] Handshake complete` | the connection to the destination is up, the data can flow |
+| `[>] sent ...` / `[<--] received ...` | the actual traffic, with the total so far.  A big answer comes in many pieces, so a line is only printed when the amount of data has grown a lot |
+| `[*] flow closed` | the connection ended, with the totals and how long it lasted |
+| `[*] N device(s), N flow(s), ...` | where the server is at the moment, every ten seconds |
+| `[!] ...` | something went wrong |
+
+How much it prints:
+
+| `--level` | |
+|---|---|
+| `verbose` (the default) | everything, including the traffic |
+| `normal` | the life of the flows, without the traffic lines |
+| `quiet` | only the problems and the totals |
 
 ---
 

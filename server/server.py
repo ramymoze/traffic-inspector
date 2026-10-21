@@ -34,7 +34,7 @@ from .crypto import (
     unseal_with_master,
 )
 from .inspector import Inspector
-from .proxy import Proxy, _would_block
+from .proxy import Proxy, _size, _would_block
 
 NONCE_LEN = 8
 
@@ -87,6 +87,7 @@ class TunnelServer:
         self.outbox = deque()
         self.selector = selectors.DefaultSelector()
         self.running = True
+        self._last_summary = None
 
         self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -94,11 +95,42 @@ class TunnelServer:
         self.udp.setblocking(False)
         self.selector.register(self.udp, selectors.EVENT_READ, ("udp", None))
 
+    # -- the state of the server ---------------------------------------------
+    def summary(self):
+        """What the server has seen so far."""
+        rows = self.inspector.rows()
+        up = sum(int(r.get("bytes_up") or 0) for r in rows)
+        down = sum(int(r.get("bytes_down") or 0) for r in rows)
+        devices = set(r.get("device") for r in rows if r.get("device"))
+        return {
+            "devices": devices,
+            "flows": len(rows),
+            "up": up,
+            "down": down,
+        }
+
+    def print_summary(self, final=False):
+        state = self.summary()
+        if not final:
+            if not state["flows"] or state == self._last_summary:
+                return
+        self._last_summary = state
+        logs.status(
+            "%d device(s), %d flow(s), %s up, %s down"
+            % (
+                len(state["devices"]),
+                state["flows"],
+                _size(state["up"]),
+                _size(state["down"]),
+            )
+        )
+
     # -- main loop ---------------------------------------------------------
     def run(self):
-        logs.info("Tunnel is active at %s:%d" % (self.host, self.port))
-        logs.info("Monitoring Tunnel and Internet sessions...")
-        logs.info("Inspector writing to %s" % self.inspector.path)
+        logs.info("The tunnel is up on %s:%d" % (self.host, self.port))
+        logs.info("Watching for devices ...")
+        logs.info("The traffic is written to %s" % self.inspector.path)
+        last_summary = time.time()
         try:
             while self.running:
                 events = self.selector.select(timeout=0.2)
@@ -117,10 +149,13 @@ class TunnelServer:
                 self.inspector.maybe_write()
                 self._expire_sessions()
                 self.proxy.expire_closing()
+                if time.time() - last_summary > 10:
+                    last_summary = time.time()
+                    self.print_summary()
         except KeyboardInterrupt:
-            logs.warn("Shutdown signal received. Closing all sockets.")
+            logs.warn("Stopping ...")
         except Exception as exc:  # pragma: no cover - safety net
-            logs.error("CRITICAL Server Error: %s" % exc)
+            logs.error("The server had a problem: %s" % exc)
         finally:
             self.shutdown()
 
@@ -144,7 +179,9 @@ class TunnelServer:
             self.inspector.maybe_write(force=True)
         except Exception:
             pass
-        logs.info("Server is Down.")
+        self.print_summary(final=True)
+        logs.info("The tunnel is down.")
+        logs.info("The traffic is in %s" % self.inspector.path)
 
     # -- datagram handling -------------------------------------------------
     def _read_datagram(self):
@@ -252,8 +289,8 @@ class TunnelServer:
         header = proto.build_header(proto.HELLO_ACK, 0, len(ack))
         self._send_datagram(addr, seal_with_master(self.master, header, ack))
         logs.ok(
-            "Client connected: %s:%d (session %s%s)"
-            % (addr[0], addr[1], client_id.hex(), ", device %s" % device if device else "")
+            "Device connected: %s from %s:%d  (session %s)"
+            % (device or "a device", addr[0], addr[1], client_id.hex())
         )
 
     def _dispatch(self, addr, ftype, flags, flow_id, payload):
@@ -412,9 +449,9 @@ class TunnelServer:
             for flow_id in list(session.flow_ids):
                 flow = self.proxy.flows.get((addr, flow_id))
                 if flow is not None:
-                    self.proxy.close_flow(flow, proto.CLOSE_TIMEOUT, "closed", "session timed out")
+                    self.proxy.close_flow(flow, proto.CLOSE_TIMEOUT, "closed", "the device went away")
             self.sessions.pop(addr, None)
-            logs.info("Session %s timed out" % addr[0])
+            logs.info("Device %s went away" % addr[0])
 
 
 def main(argv=None):

@@ -101,6 +101,11 @@ def info(message, level=NORMAL):
     log("*", message, level, "info")
 
 
+def status(message, level=NORMAL):
+    """A line about the state of the server, not about one flow."""
+    log("*", message, level, "dim")
+
+
 def ok(message, level=NORMAL):
     log("+", message, level, "ok")
 

@@ -48,6 +48,15 @@ def _would_block(exc):
     return False
 
 
+def _size(size):
+    """A number of bytes in a way a human reads it."""
+    if size < 1024:
+        return "%d B" % size
+    if size < 1024 * 1024:
+        return "%.1f KB" % (size / 1024.0)
+    return "%.1f MB" % (size / 1048576.0)
+
+
 class Flow:
     """One client connection to one destination."""
 
@@ -83,6 +92,21 @@ class Flow:
         self.want_write = False
         self.closing = False  # the client is done sending
         self.close_deadline = None
+        #: the next line about the traffic is printed when this is reached
+        self.next_report = 0
+
+    def report_traffic(self):
+        """Should a line about the traffic be printed now?
+
+        A big answer comes in many pieces, one line for each of them would
+        bury everything else.  The line is printed when the amount of data
+        has grown a lot since the last one.
+        """
+        total = self.bytes_up + self.bytes_down
+        if total < self.next_report:
+            return False
+        self.next_report = max(self.next_report * 4, 8192)
+        return True
 
     @property
     def label(self):
@@ -181,9 +205,11 @@ class Proxy:
         self.server.inspector.upsert(flow)
 
         logs.tunnel(
-            "%s -> %s:%s (%s/%s)"
+            "%s  %s:%s -> %s:%s  (%s/%s)"
             % (
-                flow.source_label,
+                flow.device or "device",
+                flow.src_ip or flow.tunnel_src,
+                flow.src_port or flow.tunnel_src_port,
                 flow.dst_ip,
                 flow.dst_port,
                 flow.proto_name,
@@ -216,7 +242,11 @@ class Proxy:
                 sent = 0
             if sent:
                 flow.bytes_up += sent
-                logs.detail("Payload sent to %s:%s (%d bytes)" % (flow.dst_ip, flow.dst_port, sent))
+                if flow.report_traffic():
+                    logs.detail(
+                        "sent %s to %s:%s  (%s in total)"
+                        % (_size(sent), flow.dst_ip, flow.dst_port, _size(flow.bytes_up))
+                    )
                 self.server.inspector.upsert(flow)
             return
 
@@ -251,7 +281,11 @@ class Proxy:
         if sent:
             flow.pending = flow.pending[sent:]
             flow.bytes_up += sent
-            logs.detail("Payload sent to %s:%s (%d bytes)" % (flow.dst_ip, flow.dst_port, sent))
+            if flow.report_traffic():
+                logs.detail(
+                    "sent %s to %s:%s  (%s in total)"
+                    % (_size(sent), flow.dst_ip, flow.dst_port, _size(flow.bytes_up))
+                )
             self.server.inspector.upsert(flow)
             if flow.pending and len(flow.pending) < MAX_PENDING:
                 self.server.want_read(flow)
@@ -282,7 +316,11 @@ class Proxy:
             return
 
         flow.bytes_down += len(data)
-        logs.response("RESPONSE from Internet (%d bytes)" % len(data))
+        if flow.report_traffic():
+            logs.response(
+                "received %s from %s:%s  (%s in total)"
+                % (_size(len(data)), flow.dst_ip, flow.dst_port, _size(flow.bytes_down))
+            )
         self._send_to_client(flow, data)
         self.server.inspector.upsert(flow)
 
@@ -372,12 +410,14 @@ class Proxy:
         self.server.inspector.upsert(flow)
         self.server.send_frame(flow.session, flow.flow_id, proto.CLOSE, bytes([reason]))
         logs.info(
-            "Closing session for %s (%s, up %d B, down %d B)"
+            "flow closed  %s -> %s:%s  (up %s, down %s, %.1f s)"
             % (
-                flow.source_label,
-                proto.close_name(reason),
-                flow.bytes_up,
-                flow.bytes_down,
+                flow.device or "device",
+                flow.dst_ip,
+                flow.dst_port,
+                _size(flow.bytes_up),
+                _size(flow.bytes_down),
+                (flow.ended_at or time.time()) - flow.started_at,
             )
         )
 

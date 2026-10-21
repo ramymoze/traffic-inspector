@@ -41,6 +41,14 @@ export interface TunnelConfig {
   device: string;
 }
 
+/** What the app remembers between two starts. */
+export interface SavedConfig {
+  server: string;
+  port: number;
+  key: string;
+  device: string;
+}
+
 const emitter = new NativeEventEmitter(NativeTunnel);
 
 export const Tunnel = {
@@ -69,6 +77,20 @@ export const Tunnel = {
 
   status(): Promise<TunnelStatus> {
     return NativeTunnel.status();
+  },
+
+  /** The settings of the tunnel, they survive a restart of the app. */
+  getConfig(): Promise<SavedConfig> {
+    return NativeTunnel.getConfig();
+  },
+
+  setConfig(config: SavedConfig): Promise<boolean> {
+    return NativeTunnel.setConfig(
+      config.server,
+      config.port,
+      config.key,
+      config.device,
+    );
   },
 
   onStateChanged(

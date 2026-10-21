@@ -223,7 +223,9 @@ class TunnelClient(
             val total = data.size
             var offset = 0
             while (offset < total) {
-                val chunk = data.copyOfRange(offset, minOf(offset + MAX_DATA, total))
+                // two bytes of the payload are the length of the datagram,
+                // the rest has to fit into one frame
+                val chunk = data.copyOfRange(offset, minOf(offset + MAX_DATA - 2, total))
                 val payload = byteArrayOf((total shr 8).toByte(), total.toByte()) + chunk
                 sendFrame(TYPE_DATA, flowId, payload, FLAG_DATAGRAM)
                 offset += chunk.size
@@ -424,7 +426,8 @@ class TunnelClient(
         return mac.doFinal(data)
     }
 
-    private fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray {
+    /** The key of the session, derived from the master key. */
+    internal fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray {
         val extract = Mac.getInstance("HmacSHA256")
         extract.init(SecretKeySpec(salt, "HmacSHA256"))
         val prk = extract.doFinal(ikm)

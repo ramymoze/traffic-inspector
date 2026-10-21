@@ -1,5 +1,6 @@
 package com.trafficinspector.react
 
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -31,6 +32,10 @@ class TunnelModule(reactContext: ReactApplicationContext) :
     }
 
     private var pendingPermission: Promise? = null
+
+    private val prefs by lazy {
+        reactApplicationContext.getSharedPreferences("TunnelConfig", Context.MODE_PRIVATE)
+    }
 
     init {
         TunnelService.listeners.add(this)
@@ -138,6 +143,28 @@ class TunnelModule(reactContext: ReactApplicationContext) :
         TunnelService.flows.forEach { flows.pushMap(Arguments.makeNativeMap(it.toMap())) }
         result.putArray("flows", flows)
         promise.resolve(result)
+    }
+
+    /** The settings of the tunnel, they should survive a restart. */
+    @ReactMethod
+    fun getConfig(promise: Promise) {
+        val result = Arguments.createMap()
+        result.putString("server", prefs.getString("server", "") ?: "")
+        result.putInt("port", prefs.getInt("port", 5555))
+        result.putString("key", prefs.getString("key", "") ?: "")
+        result.putString("device", prefs.getString("device", "") ?: "")
+        promise.resolve(result)
+    }
+
+    @ReactMethod
+    fun setConfig(server: String, port: Int, key: String, device: String, promise: Promise) {
+        prefs.edit()
+            .putString("server", server)
+            .putInt("port", port)
+            .putString("key", key)
+            .putString("device", device)
+            .apply()
+        promise.resolve(true)
     }
 
     @ReactMethod

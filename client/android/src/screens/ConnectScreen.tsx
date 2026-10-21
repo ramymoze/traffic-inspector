@@ -127,11 +127,40 @@ export default function ConnectScreen() {
         setFlows(status.flows ?? []);
       })
       .catch(() => undefined);
+    Tunnel.getConfig()
+      .then(config => {
+        if (config?.server) {
+          setServer(config.server);
+        }
+        if (config?.port) {
+          setPort(String(config.port));
+        }
+        if (config?.key) {
+          setKey(config.key);
+        }
+        if (config?.device) {
+          setDevice(config.device);
+        }
+      })
+      .catch(() => undefined);
     return () => {
       stateSub.remove();
       flowSub.remove();
     };
   }, []);
+
+  // remember the settings, so the key does not have to be typed again
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Tunnel.setConfig({
+        server,
+        port: parseInt(port, 10) || 5555,
+        key,
+        device,
+      }).catch(() => undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [server, port, key, device]);
 
   const connected = state === 'connected' || state === 'connecting';
 

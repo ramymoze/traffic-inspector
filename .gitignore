@@ -212,3 +212,6 @@ __marimo__/
 # traffic-inspector runtime artifacts
 /traffic.csv
 /traffic.csv.*.tmp
+/android.csv
+/android.csv.*.tmp
+/story.csv

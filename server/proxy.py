@@ -291,7 +291,9 @@ class Proxy:
             total = len(data)
             offset = 0
             while offset < total:
-                chunk = data[offset:offset + proto.MAX_DATA]
+                # two bytes of the payload are the length of the datagram, the
+                # rest has to fit into one frame
+                chunk = data[offset:offset + proto.MAX_DATA - 2]
                 payload = struct.pack("!H", total) + chunk
                 self.server.send_frame(
                     flow.session, flow.flow_id, proto.DATA, payload, proto.FLAG_DATAGRAM

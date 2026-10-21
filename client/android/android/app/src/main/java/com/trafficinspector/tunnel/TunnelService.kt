@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import com.trafficinspector.MainActivity
 import com.trafficinspector.R
 import java.io.FileInputStream
@@ -75,6 +76,7 @@ class TunnelService : VpnService() {
 
         private const val NOTIFICATION_ID = 4711
         private const val CHANNEL_ID = "traffic-inspector"
+        private const val TAG = "TrafficInspector"
 
         /** Android has no /etc/services, so the common ports are listed here. */
         private val SERVICES = mapOf(
@@ -157,6 +159,9 @@ class TunnelService : VpnService() {
         val vpn = Builder()
             .setSession("Traffic Inspector")
             .setMtu(TUN_MTU)
+            // the file descriptor is non blocking by default, a thread that
+            // reads from it would spin over nothing
+            .setBlocking(true)
             .addAddress(TUN_ADDRESS, TUN_PREFIX)
             .addRoute("0.0.0.0", 0)
             .addDnsServer(DNS_SERVER)
@@ -181,6 +186,11 @@ class TunnelService : VpnService() {
         )
         theBridge.listener = object : TcpBridge.Listener {
             override fun onFlowOpened(flow: TcpFlow) {
+                Log.d(
+                    TAG,
+                    "flow ${flow.tunnelFlow.flowId}: ${flow.key.srcIp}:${flow.key.srcPort} -> " +
+                        "${flow.key.dstIp}:${flow.key.dstPort}"
+                )
                 publishFlow(
                     FlowInfo(
                         flow.tunnelFlow.flowId,
@@ -236,6 +246,9 @@ class TunnelService : VpnService() {
         }
         client = tunnel
         bridge = theBridge
+        // the flag has to be set before the threads start, otherwise the
+        // reader sees it as false and stops at once
+        running = true
 
         reader = Thread({ readFromKernel(vpn) }, "tunnel-reader").apply {
             isDaemon = true
@@ -245,7 +258,6 @@ class TunnelService : VpnService() {
             isDaemon = true
             start()
         }
-        running = true
         return START_STICKY
     }
 
@@ -253,21 +265,54 @@ class TunnelService : VpnService() {
     private fun readFromKernel(vpn: ParcelFileDescriptor) {
         val input = tunInput ?: FileInputStream(vpn.fileDescriptor)
         val buffer = ByteArray(32767)
+        var packets = 0
+        var last = ""
         try {
+            Log.d(TAG, "the interface is ${describe(vpn.fileDescriptor)}")
             while (running) {
-                val read = input.read(buffer)
-                if (read <= 0) break
+                val read = try {
+                    input.read(buffer)
+                } catch (exc: java.io.IOException) {
+                    last = exc.message ?: exc.javaClass.simpleName
+                    Log.d(TAG, "reading the interface failed: $last")
+                    break
+                }
+                if (read <= 0) {
+                    if (last.isEmpty()) {
+                        last = "nothing to read ($read)"
+                    }
+                    // the interface is not blocking, wait a moment
+                    try {
+                        Thread.sleep(10)
+                    } catch (ignored: InterruptedException) {
+                        break
+                    }
+                    continue
+                }
+                packets++
                 bridge?.handlePacket(buffer.copyOfRange(0, read))
                 flushToKernel()
             }
-        } catch (ignored: Exception) {
+        } catch (exc: Throwable) {
+            Log.d(TAG, "the reader stopped: ${exc.javaClass.name}: ${exc.message}")
+            last = exc.javaClass.simpleName
         }
+        Log.d(TAG, "the kernel sent $packets packet(s), last was: $last")
+    }
+
+    /** What kind of file descriptor the system gave us. */
+    private fun describe(fd: java.io.FileDescriptor): String = try {
+        val flags = android.system.Os.fcntlInt(fd, android.system.OsConstants.F_GETFL, 0)
+        "blocking=" + ((flags and android.system.OsConstants.O_NONBLOCK) == 0)
+    } catch (exc: Exception) {
+        "unknown (${exc.message})"
     }
 
     private fun receiveFromServer(tunnel: TunnelClient, theBridge: TcpBridge) {
         try {
             tunnel.handshake()
             publish("connected", "the tunnel is up")
+            Log.d(TAG, "the tunnel is up")
             while (running) {
                 val frame = tunnel.receiveFrame(1000) ?: continue
                 when (frame.type) {
@@ -279,6 +324,7 @@ class TunnelService : VpnService() {
                 flushToKernel()
             }
         } catch (exc: Exception) {
+            Log.d(TAG, "the tunnel failed: ${exc.message}")
             publish("error", exc.message ?: "the tunnel failed")
         }
     }

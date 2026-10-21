@@ -62,6 +62,42 @@ The master key is created automatically in `.env` the first time the server
 runs.  **It is a secret**: anybody who has it can use your tunnel.  The file
 is already in `.gitignore`.
 
+## Run it
+
+Two commands, in the root of the project.  Double click them, or run them
+from a terminal.
+
+### `start-server.bat`
+
+Starts the server and waits for a phone to connect.  It prints what the
+phone needs: the address of this machine, the master key and how to get the
+app onto the phone.
+
+```
+========================================================================
+  THE SERVER IS RUNNING
+========================================================================
+
+  csv file      : C:\...\traffic-inspector\traffic.csv
+  master key    : 1b4e6f95...
+
+  the phone has to reach this machine:
+    on the same wifi : 192.168.100.8:5555
+    also            : 172.22.0.1:5555
+    over the internet: 154.248.244.77:5555  (needs a port forward)
+
+  [!] the firewall may block the port. As administrator run:
+      netsh advfirewall firewall add rule name="traffic-inspector" ...
+```
+
+### `start-emulator.bat`
+
+Starts the emulator **and** the server, installs the app in it, fills in
+the settings and starts the tunnel.  One command, and the traffic of the
+virtual machine shows up in `traffic.csv` right away.
+
+Both take the same options, for example `start-server.bat --port 5556`.
+
 ## The clients
 
 | Client | What it is | State |

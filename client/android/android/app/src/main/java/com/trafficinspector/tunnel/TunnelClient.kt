@@ -21,6 +21,9 @@ class RemoteFlow(
     val dstPort: Int,
     val protocol: Int
 ) {
+    /** A datagram is not a stream: it has its own boundaries. */
+    val isDatagram: Boolean = protocol == TunnelClient.PROTO_UDP
+
     @Volatile
     var status: Int = TunnelClient.STATUS_PENDING
 
@@ -37,6 +40,10 @@ class RemoteFlow(
     private var stream = ByteArrayOutputStream()
     private val datagrams = ArrayDeque<ByteArray>()
 
+    /** The pieces of a datagram that is not whole yet. */
+    private val dgramBuffer = ByteArrayOutputStream()
+    private var dgramTotal = 0
+
     fun appendStream(data: ByteArray) {
         synchronized(lock) {
             stream.write(data)
@@ -44,10 +51,27 @@ class RemoteFlow(
         }
     }
 
-    fun appendDatagram(data: ByteArray) {
+    /**
+     * Put one piece of a datagram in place.
+     *
+     * A datagram that is bigger than one frame comes in pieces, and the
+     * kernel only accepts a datagram that is whole - a broken one is
+     * thrown away without a word.
+     */
+    fun appendDatagram(piece: ByteArray, total: Int) {
         synchronized(lock) {
-            datagrams.addLast(data)
-            lock.notifyAll()
+            if (dgramTotal == 0) {
+                dgramTotal = total
+                dgramBuffer.reset()
+            }
+            dgramBuffer.write(piece)
+            if (dgramBuffer.size() >= dgramTotal) {
+                val whole = dgramBuffer.toByteArray()
+                dgramBuffer.reset()
+                dgramTotal = 0
+                datagrams.addLast(whole)
+                lock.notifyAll()
+            }
         }
     }
 
@@ -403,6 +427,11 @@ class TunnelClient(
         if (received <= 0) return null
         val wire = packet.data.copyOfRange(0, received)
         val decrypted = decrypt(wire) ?: return null
+        // Any frame of the server proves that it is still there.  It must not
+        // be only the answer of the ping: when the phone is busy, that one
+        // can be dropped, and then the client would think the server is gone
+        // and throw away every flow it has.
+        lastAnswer = System.currentTimeMillis()
         val (header, payload) = decrypted
         val buffer = java.nio.ByteBuffer.wrap(header)
         buffer.get() // the version
@@ -431,7 +460,8 @@ class TunnelClient(
                     if (payload.size < 2) return
                     val total = ((payload[0].toInt() and 0xFF) shl 8) or (payload[1].toInt() and 0xFF)
                     val chunk = payload.copyOfRange(2, payload.size)
-                    flow.appendDatagram(chunk)
+                    // a datagram bigger than one frame comes in pieces
+                    flow.appendDatagram(chunk, total)
                     flow.bytesIn += chunk.size
                 } else {
                     flow.appendStream(payload)

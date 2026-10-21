@@ -347,8 +347,11 @@ class TunnelServer:
             )
         except Exception as exc:
             text = "the report could not be made: %s\n" % exc
+        # every report is kept, they end up in the reports folder
+        path = report_module.save_report(text, str(self.inspector.path))
+        if path:
+            logs.info("the report is in %s" % path)
         self._report_results.append((address, text))
-
     def _send_reports(self):
         """Give the reports that are ready to the devices that asked."""
         while self._report_results:

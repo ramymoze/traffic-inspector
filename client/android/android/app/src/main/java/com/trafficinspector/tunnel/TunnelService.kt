@@ -361,7 +361,16 @@ class TunnelService : VpnService() {
                     continue
                 }
                 when (frame.type) {
-                    TunnelClient.TYPE_DATA -> theBridge.onTunnelData(frame.flowId, frame.payload)
+                    TunnelClient.TYPE_DATA -> {
+                        val flow = tunnel.flow(frame.flowId)
+                        if (flow != null && flow.isDatagram) {
+                            // a datagram comes in pieces, the flow puts them
+                            // together again
+                            theBridge.onTunnelDatagram(frame.flowId)
+                        } else {
+                            theBridge.onTunnelData(frame.flowId, frame.payload)
+                        }
+                    }
                     TunnelClient.TYPE_OPEN_OK, TunnelClient.TYPE_CLOSE -> {
                         tunnel.flow(frame.flowId)?.let { theBridge.onTunnelStatus(it) }
                     }

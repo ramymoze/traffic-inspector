@@ -32,9 +32,12 @@ from server.report import (  # noqa: F401
     collect_findings,
     find_baseline,
     load,
+    load_baseline,
     make_report,
     parse_args,
+    reports_folder,
     report_text,
+    save_report,
     verdict,
 )
 
@@ -46,9 +49,14 @@ def main(argv=None):
     except ReportError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    baseline = find_baseline(options)
+    baseline = load_baseline(options)
     findings = collect_findings(rows, baseline, options)
-    print(report_text(rows, findings, options))
+    text = report_text(rows, findings, options)
+    print(text)
+    if not options.no_save:
+        path = save_report(text, options.csv, options.reports_dir)
+        if path:
+            print("[*] the report is also in %s" % path)
     # something to look at?  the exit code says so, handy for a cron job
     return 1 if any(f.severity == "high" for f in findings) else 0
 

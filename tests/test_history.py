@@ -67,3 +67,71 @@ def test_auto_finds_nothing_when_there_is_no_archive(tmp_path):
     path.write_text("flow_id,ts_start\n1,2026-10-21T00:00:00+00:00\n")
     options = analyze.parse_args(["--csv", str(path), "--baseline", "auto"])
     assert analyze.find_baseline(options) is None
+
+
+def _write_csv(path, rows=1):
+    """A csv file with all the columns the inspector writes."""
+    import csv
+
+    from server.inspector import FIELDS
+
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer.writeheader()
+        for number in range(rows):
+            writer.writerow({
+                "flow_id": number,
+                "ts_start": "2026-10-21T00:00:00+00:00",
+                "ts_end": "2026-10-21T00:05:00+00:00",
+                "time_of_day": "00:00:00",
+                "duration_s": "300.000",
+                "client_id": "abc",
+                "device": "pixel8-android",
+                "tunnel_src": "203.0.113.9",
+                "tunnel_src_port": "51234",
+                "src_ip": "10.8.0.1",
+                "src_port": "52344",
+                "dst_ip": "142.250.200.164",
+                "dst_port": "443",
+                "dst_name": "",
+                "proto": "TCP",
+                "service": "https",
+                "bytes_up": "120",
+                "bytes_down": "4096",
+                "state": "closed",
+                "note": "",
+            })
+
+
+def test_the_command_line_survives_the_baseline(tmp_path, capsys):
+    """The baseline is a file of rows, not the name of a file."""
+    path = tmp_path / "traffic.csv"
+    _write_csv(path)
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    _write_csv(tmp_path / ("traffic-%s.csv" % yesterday))
+
+    code = analyze.main(["--csv", str(path), "--baseline", "auto"])
+    assert code in (0, 1)
+    assert "traffic-inspector" in capsys.readouterr().out
+
+
+def test_the_report_is_kept_in_the_reports_folder(tmp_path, capsys):
+    """Every report is written next to the csv, in the reports folder."""
+    path = tmp_path / "traffic.csv"
+    _write_csv(path)
+
+    analyze.main(["--csv", str(path)])
+
+    saved = sorted((tmp_path / "reports").glob("report-*.txt"))
+    assert saved, "the report was not kept"
+    assert "traffic-inspector" in saved[-1].read_text(encoding="utf-8")
+
+
+def test_the_reports_folder_can_be_chosen(tmp_path, capsys):
+    path = tmp_path / "traffic.csv"
+    _write_csv(path)
+    folder = tmp_path / "somewhere-else"
+
+    analyze.main(["--csv", str(path), "--reports-dir", str(folder)])
+
+    assert list(folder.glob("report-*.txt")), "the report was not kept there"

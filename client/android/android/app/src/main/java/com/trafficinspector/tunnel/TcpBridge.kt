@@ -287,6 +287,14 @@ class TcpBridge(
     }
 
     private fun udpToKernel(flow: UdpFlow, data: ByteArray) {
+        if (data.size >= 1000) {
+            // A datagram of this size comes in pieces and is put back
+            // together here.  A broken one is thrown away by the kernel.
+            android.util.Log.d(
+                "TrafficInspector",
+                "a datagram of ${data.size} bytes to the kernel (${flow.key.dstIp}:${flow.key.dstPort})"
+            )
+        }
         emit(
             IpStack.buildUdpPacket(
                 src = flow.key.dstIp,
@@ -309,6 +317,19 @@ class TcpBridge(
         if (flow is TcpFlow) {
             dataToKernel(flow, data)
         }
+    }
+
+    /**
+     * Called when the server sent a datagram.
+     *
+     * A datagram that is bigger than one frame comes in pieces, and the
+     * pieces are put back together in the flow.  The kernel only accepts a
+     * datagram that is whole - a broken one is thrown away without a word.
+     */
+    fun onTunnelDatagram(tunnelFlowId: Int) = synchronized(lock) {
+        val flow = byTunnelId[tunnelFlowId] as? UdpFlow ?: return
+        val datagram = flow.tunnelFlow.readDatagram(0) ?: return
+        udpToKernel(flow, datagram)
     }
 
     /** Called for every frame that came from the server. */

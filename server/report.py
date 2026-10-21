@@ -477,6 +477,21 @@ def find_baseline(options):
     return None
 
 
+def load_baseline(options):
+    """The rows of the file to compare against, or None.
+
+    ``--baseline auto`` looks for the archive of yesterday, the server keeps
+    one file per day.
+    """
+    path = find_baseline(options)
+    if not path:
+        return None
+    try:
+        return load(path)
+    except ReportError:
+        return None
+
+
 def make_report(csv_path, baseline_path=None, options=None):
     """The report of a CSV file, as text.
 
@@ -501,6 +516,40 @@ def default_options(csv_path="traffic.csv", **kwargs):
     for key, value in kwargs.items():
         setattr(options, key, value)
     return options
+
+
+def reports_folder(csv_path, folder=None):
+    """Where the reports are kept.
+
+    By default it is a ``reports`` folder next to the CSV file, so the
+    reports of the day end up together and the old ones are kept.
+    """
+    if folder:
+        return str(folder)
+    base = os.path.dirname(os.path.abspath(csv_path))
+    return os.path.join(base, "reports")
+
+
+def save_report(text, csv_path, folder=None, when=None):
+    """Write the report into the reports folder and return the path.
+
+    The name holds the time, so the reports can be put in order and the
+    old ones are not overwritten.
+    """
+    folder = reports_folder(csv_path, folder)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        return None
+    when = when or datetime.now()
+    name = "report-%s.txt" % when.strftime("%Y-%m-%d-%H%M%S")
+    path = os.path.join(folder, name)
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    except OSError:
+        return None
+    return path
 
 
 def parse_args(argv=None):
@@ -531,5 +580,15 @@ def parse_args(argv=None):
         type=float,
         default=60.0,
         help="how long a flow has to last to be a stream (default 60)",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        default=None,
+        help="where the report is kept (default: a reports folder next to the csv)",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="do not write the report into the reports folder",
     )
     return parser.parse_args(argv)

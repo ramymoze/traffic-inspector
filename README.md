@@ -308,6 +308,15 @@ while the server runs.
 python tools/analyze.py --csv traffic.csv
 ```
 
+Every report is also written into the **`reports` folder** next to the CSV
+file, with the time in the name (`reports/report-2026-10-22-0130.txt`), so
+the old ones are kept.  The server does the same when the phone asks for a
+report with the button in the app.  Another place:
+
+```bash
+python tools/analyze.py --csv traffic.csv --reports-dir somewhere-else
+```
+
 It leads with a verdict, then the details:
 
 ```

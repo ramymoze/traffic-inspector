@@ -223,3 +223,6 @@ __marimo__/
 # the Wintun driver, it is downloaded and not part of the sources
 /client/wintun.dll
 /client/vendor/
+
+# the reports the inspector makes
+/reports/

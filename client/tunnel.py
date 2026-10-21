@@ -415,6 +415,10 @@ class TunnelClient:
         if opened is None:
             # a frame of an older session, not for us
             return
+        # any frame of the server proves that it is still there, it must not
+        # be only the answer of the ping: that one can be dropped when the
+        # phone is busy, and then the client would throw away every flow
+        self.last_answer = time.time()
         header, payload = opened
         parsed = proto.parse_header(header)
         ftype = parsed["type"]

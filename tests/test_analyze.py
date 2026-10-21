@@ -139,6 +139,91 @@ def test_a_destination_that_was_already_there_is_not_reported(tmp_path):
     assert "new" not in [f.kind for f in findings]
 
 
+# -- the device that is new -------------------------------------------------
+def test_a_new_device_does_not_make_everything_look_new(tmp_path):
+    """A device that was not there yesterday: everything it does is new.
+
+    That is not something to report, or the report cries wolf every time a
+    phone is connected.
+    """
+    path = tmp_path / "now.csv"
+    baseline = tmp_path / "before.csv"
+    write_csv(baseline, [a_row(device="pixel8-android", dst_ip="1.2.3.4", dst_port=443)])
+    write_csv(
+        path,
+        [
+            a_row(device="rmx3687", dst_ip="198.51.100.7", dst_port=8081),
+            a_row(device="rmx3687", dst_ip="203.0.113.5", dst_port=443),
+        ],
+    )
+    rows = analyze.load(str(path))
+    old = analyze.load(str(baseline))
+    findings = analyze.collect_findings(rows, old, options_for(str(path)))
+    assert "new" not in [f.kind for f in findings], "the new device was reported"
+
+
+def test_a_device_that_was_there_and_starts_something_new_is_reported(tmp_path):
+    """The same device, but a destination it never used."""
+    path = tmp_path / "now.csv"
+    baseline = tmp_path / "before.csv"
+    write_csv(baseline, [a_row(device="pixel8-android", dst_ip="1.2.3.4", dst_port=443)])
+    write_csv(
+        path,
+        [
+            a_row(device="pixel8-android", dst_ip="1.2.3.4", dst_port=443),
+            a_row(device="pixel8-android", dst_ip="198.51.100.7", dst_port=8081),
+        ],
+    )
+    rows = analyze.load(str(path))
+    old = analyze.load(str(baseline))
+    findings = analyze.collect_findings(rows, old, options_for(str(path)))
+    new = [f for f in findings if f.kind == "new"]
+    assert new, "the new destination of the known device was not reported"
+
+
+def test_the_night_traffic_of_a_new_device_is_not_suspicious(tmp_path):
+    """There is nothing to compare a new device with."""
+    path = tmp_path / "now.csv"
+    baseline = tmp_path / "before.csv"
+    write_csv(baseline, [a_row(device="pixel8-android")])
+    write_csv(path, [a_row(device="rmx3687", bytes_up="5242880")])
+    rows = analyze.load(str(path))
+    old = analyze.load(str(baseline))
+    findings = analyze.collect_findings(rows, old, options_for(str(path)))
+    night = [f for f in findings if f.kind == "night"]
+    assert night, "the night traffic was not reported at all"
+    assert night[0].severity == "low", "a new device must not look suspicious"
+    assert "new" in night[0].detail
+
+
+def test_a_new_device_is_marked_in_the_report(tmp_path):
+    path = tmp_path / "now.csv"
+    baseline = tmp_path / "before.csv"
+    write_csv(baseline, [a_row(device="pixel8-android")])
+    write_csv(path, [a_row(device="rmx3687")])
+    rows = analyze.load(str(path))
+    old = analyze.load(str(baseline))
+    findings = analyze.collect_findings(rows, old, options_for(str(path)))
+    text = analyze.report_text(rows, findings, options_for(str(path)), old)
+    assert "rmx3687 (new)" in text
+
+
+def test_the_ports_a_phone_really_uses_are_not_odd(tmp_path):
+    """The push of google and the stun of the calls are normal."""
+    path = tmp_path / "traffic.csv"
+    write_csv(
+        path,
+        [
+            a_row(dst_port=5228, service="Unknown (5228)"),
+            a_row(dst_port=5222, service="Unknown (5222)"),
+            a_row(dst_port=3478, service="Unknown (3478)"),
+        ],
+    )
+    rows = analyze.load(str(path))
+    findings = analyze.collect_findings(rows, None, options_for(str(path)))
+    assert "port" not in [f.kind for f in findings], "a normal port was called odd"
+
+
 # -- the odd port -----------------------------------------------------------
 def test_a_port_that_is_not_a_service_is_reported(tmp_path):
     path = tmp_path / "traffic.csv"

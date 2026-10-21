@@ -345,6 +345,12 @@ What it looks for:
 | **an odd port** | a port that is not a normal service for a phone |
 | **a talker** | a device that suddenly opened many more connections than before |
 
+A device that was not there yesterday is **new**, and it is marked as such in
+the report.  Everything it does is new too, so that is not reported - the
+report only complains about what a device does that it did *not* do before.
+The ports a phone really uses (the push of Google, the stun of the calls)
+are not odd.
+
 With `--baseline yesterday.csv` only what is *new* is reported, and the exit
 code says whether something needs a look, so it can run in a cron job:
 

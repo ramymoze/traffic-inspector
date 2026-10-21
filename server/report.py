@@ -35,6 +35,12 @@ KNOWN_PORTS = {
     161, 162, 179, 194, 389, 443, 465, 514, 546, 547, 587, 631, 636, 993, 995,
     1080, 1433, 1434, 1521, 1723, 2049, 3128, 3306, 3389, 5000, 5432, 5900, 6379,
     8080, 8443, 8888, 9000, 9090, 27017, 28017,
+    # what a phone really uses
+    1194, 19305, 19306, 19307, 19308, 19309,  # push of the play services
+    3478, 3479, 3480, 3481,                   # stun and turn, for calls
+    5222, 5223, 5228,                         # xmpp and the push of google
+    5353, 5355,                               # the names in the local network
+    32429,                                    # the local network of the play services
 }
 
 #: Ports a phone has no reason to use.
@@ -115,6 +121,11 @@ def device_of(row):
     return row.get("device") or "(unnamed)"
 
 
+def devices_of(rows):
+    """The names of the devices in a file of rows."""
+    return set(device_of(row) for row in rows)
+
+
 def port_of(row):
     return as_int(row.get("dst_port"), 0)
 
@@ -178,7 +189,9 @@ def find_night_traffic(rows, quiet_start, quiet_end, baseline):
 
     # what the same device did in the same hours before
     before = defaultdict(lambda: [0, 0])
+    known_devices = set()
     if baseline:
+        known_devices = devices_of(baseline)
         for row in baseline:
             if quiet_start <= hour_of(row) < quiet_end:
                 entry = before[device_of(row)]
@@ -198,9 +211,12 @@ def find_night_traffic(rows, quiet_start, quiet_end, baseline):
         if was and total > was * 2:
             severity = "medium"
             detail = "%d flow(s), before it was %s in the same hours" % (count, human(was))
-        elif not was and total > 1024 * 1024:
+        elif not was and total > 1024 * 1024 and device in known_devices:
+            # only a device that was quiet before can be loud now
             severity = "medium"
             detail = "%d flow(s), it has never done that" % count
+        elif not was and total > 1024 * 1024:
+            detail = "%d flow(s), the device is new, there is nothing to compare it with" % count
         findings.append(
             Finding(
                 "night",
@@ -214,17 +230,26 @@ def find_night_traffic(rows, quiet_start, quiet_end, baseline):
 
 
 def find_new_destinations(rows, baseline):
-    """Destinations that were not there before."""
+    """Destinations that were not there before.
+
+    A device that was not in the file of yesterday is new itself.  Everything
+    it does is new too, and that is not worth a report - it only becomes
+    worth one when the device starts to do something it did not do before.
+    """
     findings = []
     if not baseline:
         return findings
     known = set()
     known_ports = set()
+    known_devices = devices_of(baseline)
     for row in baseline:
         known.add(destination_of(row))
         known_ports.add(port_of(row))
     seen = set()
     for row in rows:
+        if device_of(row) not in known_devices:
+            # the device is new, everything it does is new
+            continue
         dest = destination_of(row)
         port = port_of(row)
         if dest in seen:
@@ -332,7 +357,7 @@ def verdict(findings):
     return "NOTHING TO WORRY ABOUT"
 
 
-def report_text(rows, findings, options):
+def report_text(rows, findings, options, baseline=None):
     """The report, as text.  The same text the command line prints."""
     lines = []
 
@@ -384,9 +409,14 @@ def report_text(rows, findings, options):
     for device, (size, count, up, start, end) in sorted(
         by_device.items(), key=lambda kv: -kv[1][0]
     ):
+        name = device[:24]
+        if baseline is not None and device not in devices_of(baseline):
+            # a device that was not there yesterday: there is nothing to
+            # compare it with, so it is marked as new
+            name = "%s (new)" % device[:16]
         lines.append(
             "  %-24s %4d flow(s)  %-10s  up %-10s  %s -> %s"
-            % (device[:24], count, human(size), human(up),
+            % (name, count, human(size), human(up),
                (start or "?")[:19], (end or "still open")[:19])
         )
     lines.append("")
@@ -507,7 +537,7 @@ def make_report(csv_path, baseline_path=None, options=None):
         except ReportError:
             baseline = None
     findings = collect_findings(rows, baseline, options)
-    return report_text(rows, findings, options)
+    return report_text(rows, findings, options, baseline)
 
 
 def default_options(csv_path="traffic.csv", **kwargs):

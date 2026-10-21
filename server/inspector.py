@@ -81,6 +81,30 @@ class Inspector:
         self._last_write = 0.0
         self._lock = threading.RLock()
         self._day = datetime.now().date()
+        self._load_existing()
+
+    def _load_existing(self):
+        """Keep the rows that are already in the file.
+
+        The server may be started again - and the file should still show
+        everything that happened today.  Without this a device would look
+        new every time the server came back, and the report would say that
+        everything it does is new.
+        """
+        if not self.path.exists():
+            return
+        try:
+            with open(self.path, newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    key = (row.get("client_id", ""), row.get("flow_id", ""))
+                    if key not in self._rows:
+                        self._order.append(key)
+                    self._rows[key] = {
+                        field: row.get(field, "") for field in FIELDS
+                    }
+        except OSError:
+            pass
 
     # -- collection --------------------------------------------------------
     def upsert(self, flow):

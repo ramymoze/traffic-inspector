@@ -51,7 +51,7 @@ def main(argv=None):
         return 1
     baseline = load_baseline(options)
     findings = collect_findings(rows, baseline, options)
-    text = report_text(rows, findings, options)
+    text = report_text(rows, findings, options, baseline)
     print(text)
     if not options.no_save:
         path = save_report(text, options.csv, options.reports_dir)

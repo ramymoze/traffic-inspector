@@ -26,6 +26,7 @@ export interface SavedConfig {
   port: number;
   key: string;
   device: string;
+  startOnBoot: boolean;
 }
 
 export interface TunnelStatus {
@@ -76,6 +77,11 @@ export const Tunnel = {
       config.key,
       config.device,
     );
+  },
+
+  /** Should the tunnel come up by itself after a restart of the phone? */
+  setStartOnBoot(enabled: boolean): Promise<boolean> {
+    return NativeTunnel.setStartOnBoot(enabled);
   },
 
   /** A name for this device, so the report can tell the devices apart. */

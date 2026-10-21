@@ -33,7 +33,7 @@ class TunnelModule(reactContext: ReactApplicationContext) :
     private var pendingPermission: Promise? = null
 
     private val prefs by lazy {
-        reactApplicationContext.getSharedPreferences("TunnelConfig", Context.MODE_PRIVATE)
+        reactApplicationContext.getSharedPreferences(TunnelService.PREFS, Context.MODE_PRIVATE)
     }
 
     init {
@@ -151,21 +151,32 @@ class TunnelModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun getConfig(promise: Promise) {
         val result = Arguments.createMap()
-        result.putString("server", prefs.getString("server", "") ?: "")
-        result.putInt("port", prefs.getInt("port", 5555))
-        result.putString("key", prefs.getString("key", "") ?: "")
-        result.putString("device", prefs.getString("device", "") ?: "")
+        result.putString("server", prefs.getString(TunnelService.PREF_SERVER, "") ?: "")
+        result.putInt("port", prefs.getInt(TunnelService.PREF_PORT, 5555))
+        result.putString("key", prefs.getString(TunnelService.PREF_KEY, "") ?: "")
+        result.putString("device", prefs.getString(TunnelService.PREF_DEVICE, "") ?: "")
+        result.putBoolean(
+            "startOnBoot",
+            prefs.getBoolean(TunnelService.PREF_START_ON_BOOT, false)
+        )
         promise.resolve(result)
     }
 
     @ReactMethod
     fun setConfig(server: String, port: Int, key: String, device: String, promise: Promise) {
         prefs.edit()
-            .putString("server", server)
-            .putInt("port", port)
-            .putString("key", key)
-            .putString("device", device)
+            .putString(TunnelService.PREF_SERVER, server)
+            .putInt(TunnelService.PREF_PORT, port)
+            .putString(TunnelService.PREF_KEY, key)
+            .putString(TunnelService.PREF_DEVICE, device)
             .apply()
+        promise.resolve(true)
+    }
+
+    /** Should the tunnel come up by itself after a restart of the phone? */
+    @ReactMethod
+    fun setStartOnBoot(enabled: Boolean, promise: Promise) {
+        prefs.edit().putBoolean(TunnelService.PREF_START_ON_BOOT, enabled).apply()
         promise.resolve(true)
     }
 

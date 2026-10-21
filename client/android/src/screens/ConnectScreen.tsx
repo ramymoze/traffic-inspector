@@ -7,6 +7,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -111,6 +112,7 @@ export default function ConnectScreen() {
   const [port, setPort] = useState('5555');
   const [key, setKey] = useState('');
   const [device, setDevice] = useState('');
+  const [startOnBoot, setStartOnBoot] = useState(false);
   const [state, setState] = useState<TunnelState>('idle');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -143,6 +145,9 @@ export default function ConnectScreen() {
         } else if (!started.current) {
           Tunnel.defaultDevice().then(name => setDevice(name));
         }
+        if (config?.startOnBoot) {
+          setStartOnBoot(true);
+        }
       })
       .catch(() => undefined);
     return () => subscription.remove();
@@ -156,10 +161,11 @@ export default function ConnectScreen() {
         port: parseInt(port, 10) || 5555,
         key: key.trim(),
         device: device.trim(),
+        startOnBoot,
       }).catch(() => undefined);
     }, 400);
     return () => clearTimeout(timer);
-  }, [server, port, key, device]);
+  }, [server, port, key, device, startOnBoot]);
 
   const connected = state === 'connected';
   const working = state === 'connecting';
@@ -273,6 +279,24 @@ export default function ConnectScreen() {
             secret
             hint="the same key the server has, it is in the .env file of the server"
           />
+
+          <View style={styles.switchRow}>
+            <View style={styles.switchText}>
+              <Text style={styles.switchTitle}>connect when the phone starts</Text>
+              <Text style={styles.switchHint}>
+                the tunnel comes up by itself after a restart
+              </Text>
+            </View>
+            <Switch
+              value={startOnBoot}
+              onValueChange={value => {
+                setStartOnBoot(value);
+                Tunnel.setStartOnBoot(value).catch(() => undefined);
+              }}
+              trackColor={{ false: theme.border, true: theme.accentSoft }}
+              thumbColor={startOnBoot ? theme.accent : theme.textFaint}
+            />
+          </View>
         </View>
 
         <Pressable
@@ -415,6 +439,27 @@ const styles = StyleSheet.create({
     color: theme.textFaint,
     fontSize: 11.5,
     marginTop: 6,
+    lineHeight: 16,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  switchText: {
+    flex: 1,
+    marginRight: 12,
+  },
+  switchTitle: {
+    color: theme.text,
+    fontSize: 14.5,
+    fontWeight: '600',
+  },
+  switchHint: {
+    color: theme.textFaint,
+    fontSize: 11.5,
+    marginTop: 3,
     lineHeight: 16,
   },
   row: {

@@ -7,6 +7,10 @@ running and see the flow that is happening right now.
 One row per flow, written when the flow is created and refreshed while it is
 alive, so a long running flow (a webcam upload, for example) shows up in the
 file while it is still going.
+
+When the day changes the file is kept under its own name
+(``traffic-2026-10-21.csv``) and a new one is started, so there is a history
+to compare against.
 """
 
 import csv
@@ -15,7 +19,7 @@ import socket
 import tempfile
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 FIELDS = [
@@ -76,6 +80,7 @@ class Inspector:
         self._dirty = False
         self._last_write = 0.0
         self._lock = threading.RLock()
+        self._day = datetime.now().date()
 
     # -- collection --------------------------------------------------------
     def upsert(self, flow):
@@ -135,13 +140,31 @@ class Inspector:
     def maybe_write(self, force=False):
         """Write the file if something changed and the interval elapsed."""
         with self._lock:
-            if not self.enabled or not self._dirty:
+            if not self.enabled:
+                return False
+            self._rotate()
+            if not self._dirty:
                 return False
             now = time.time()
             if not force and (now - self._last_write) < self.flush_interval:
                 return False
             self._write_locked()
             return True
+
+    def _rotate(self):
+        """Keep the file of the day that is over under its own name."""
+        today = datetime.now().date()
+        if today == self._day:
+            return
+        self._day = today
+        try:
+            if self.path.exists():
+                archive = self.path.with_name(
+                    "%s-%s.csv" % (self.path.stem, (today - timedelta(days=1)).isoformat())
+                )
+                os.replace(str(self.path), str(archive))
+        except OSError:
+            pass
 
     def _write_locked(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)

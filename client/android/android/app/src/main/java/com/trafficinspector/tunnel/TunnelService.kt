@@ -38,6 +38,14 @@ class TunnelService : VpnService() {
         const val EXTRA_KEY = "key"
         const val EXTRA_DEVICE = "device"
 
+        /** Where the settings of the tunnel are kept. */
+        const val PREFS = "TunnelConfig"
+        const val PREF_SERVER = "server"
+        const val PREF_PORT = "port"
+        const val PREF_KEY = "key"
+        const val PREF_DEVICE = "device"
+        const val PREF_START_ON_BOOT = "startOnBoot"
+
         const val TUN_ADDRESS = "10.8.0.1"
         const val TUN_PREFIX = 24
         const val TUN_MTU = 1500
@@ -46,7 +54,7 @@ class TunnelService : VpnService() {
 
         private const val NOTIFICATION_ID = 4711
         private const val CHANNEL_ID = "traffic-inspector"
-        private const val TAG = "TrafficInspector"
+        const val TAG = "TrafficInspector"
 
         /** How often the client asks the server whether it is still there. */
         private const val PING_INTERVAL = 10000L
@@ -135,6 +143,12 @@ class TunnelService : VpnService() {
         val keyHex = intent?.getStringExtra(EXTRA_KEY) ?: ""
         val deviceName = intent?.getStringExtra(EXTRA_DEVICE) ?: "android"
         device = deviceName
+
+        if (server.isEmpty() || keyHex.isEmpty()) {
+            publish("error", "there is no server to connect to")
+            stopEverything()
+            return START_NOT_STICKY
+        }
 
         startForegroundNotification()
         publish("connecting", "connecting to $server:$port")

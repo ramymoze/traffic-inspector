@@ -323,6 +323,14 @@ code says whether something needs a look, so it can run in a cron job:
 python tools/analyze.py --csv traffic.csv --baseline yesterday.csv || mail -s "traffic" me@example.com
 ```
 
+`--baseline auto` looks for the archive of yesterday by itself.  The server
+keeps one file per day: `traffic.csv` is the current one, and when the day
+changes it is kept as `traffic-2026-10-21.csv` and a new one is started.
+That history is what makes "it never did that before" possible.
+
+**To put the server on the internet** (a small VPS, systemd, the firewall
+and the daily report): **[tools/DEPLOY.md](tools/DEPLOY.md)**.
+
 ---
 
 ## The project

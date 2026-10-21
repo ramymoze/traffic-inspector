@@ -23,7 +23,7 @@ import csv
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -441,13 +441,36 @@ def load(path):
     return rows
 
 
+def find_baseline(options):
+    """The file to compare against.
+
+    ``--baseline auto`` looks for the archive of yesterday, the server keeps
+    one file per day.
+    """
+    if not options.baseline:
+        return None
+    if options.baseline != "auto":
+        return options.baseline if os.path.exists(options.baseline) else None
+    yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
+    folder = os.path.dirname(os.path.abspath(options.csv))
+    name = os.path.splitext(os.path.basename(options.csv))[0]
+    for candidate in (
+        os.path.join(folder, "%s-%s.csv" % (name, yesterday)),
+        os.path.join(folder, "traffic-%s.csv" % yesterday),
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="analyse a traffic-inspector CSV file")
     parser.add_argument("--csv", default="traffic.csv", help="CSV file to read")
     parser.add_argument(
         "--baseline",
         default=None,
-        help="an older CSV, only what is new compared to it is reported",
+        help="an older CSV, only what is new compared to it is reported "
+             "(use 'auto' for the archive of yesterday)",
     )
     parser.add_argument(
         "--quiet-start", type=int, default=0, help="first hour of the quiet period (default 0)"
@@ -473,9 +496,7 @@ def parse_args(argv=None):
 def main(argv=None):
     options = parse_args(argv)
     rows = load(options.csv)
-    baseline = None
-    if options.baseline and os.path.exists(options.baseline):
-        baseline = load(options.baseline)
+    baseline = find_baseline(options)
     findings = collect_findings(rows, baseline, options)
     report(rows, findings, options)
     # something to look at?  the exit code says so, handy for a cron job

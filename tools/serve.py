@@ -170,15 +170,51 @@ def build_app(sdk):
     return result.returncode == 0 and os.path.exists(APK)
 
 
+def _apk_fingerprint():
+    """A fingerprint of the app, to know whether it has to be installed."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(APK, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _installed_fingerprint():
+    marker = os.path.join(os.path.dirname(APK), ".installed")
+    try:
+        with open(marker, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
 def install_app(adb):
+    """Install the app, but only when it is not there yet.
+
+    Installing it again would take the permission of the VPN away and the
+    user would have to say yes to it once more, so it is left alone when the
+    same app is already there.
+    """
     if not os.path.exists(APK):
         return False
+    fingerprint = _apk_fingerprint()
+    if _installed_fingerprint() == fingerprint:
+        say("[*] the app is already installed")
+        return True
     result = adb_run(adb, "install", "-r", APK)
-    if result.returncode == 0:
-        say("[*] the app is installed")
-    else:
+    if result.returncode != 0:
         say("[!] the app could not be installed: %s" % result.stderr.strip())
-    return result.returncode == 0
+        return False
+    say("[*] the app is installed")
+    try:
+        with open(os.path.join(os.path.dirname(APK), ".installed"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(fingerprint)
+    except OSError:
+        pass
+    return True
 
 
 def configure_app(adb, server, port, key, device):
@@ -220,18 +256,39 @@ def configure_app(adb, server, port, key, device):
             pass
 
 
+def press_button(adb, texts, timeout=30):
+    """Tap a button of the screen, found by its text.
+
+    Returns True when one of the texts was found and tapped.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        adb_run(adb, "shell", "uiautomator", "dump", "/sdcard/ui.xml")
+        result = adb_run(adb, "shell", "cat", "/sdcard/ui.xml")
+        for text in texts:
+            match = re.search(
+                r'text="%s"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+                % re.escape(text),
+                result.stdout,
+            )
+            if match:
+                x = (int(match.group(1)) + int(match.group(3))) // 2
+                y = (int(match.group(2)) + int(match.group(4))) // 2
+                adb_run(adb, "shell", "input", "touchscreen", "tap", str(x), str(y))
+                return True
+        time.sleep(1)
+    return False
+
+
 def press_the_button(adb):
     """Press "start the tunnel" in the app."""
     time.sleep(8)
-    adb_run(adb, "shell", "uiautomator", "dump", "/sdcard/ui.xml")
-    result = adb_run(adb, "shell", "cat", "/sdcard/ui.xml")
-    match = re.search(r'text="start the tunnel"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-                      result.stdout)
-    if not match:
+    if not press_button(adb, ["start the tunnel"], timeout=30):
         return False
-    x = (int(match.group(1)) + int(match.group(3))) // 2
-    y = (int(match.group(2)) + int(match.group(4))) // 2
-    adb_run(adb, "shell", "input", "touchscreen", "tap", str(x), str(y))
+    # the system asks for the permission the first time, that is answered
+    # here so the whole thing works with one command
+    time.sleep(3)
+    press_button(adb, ["OK", "Allow", "ALLOW"], timeout=15)
     return True
 
 

@@ -125,7 +125,7 @@ class TcpBridge(
 
         if (flow == null) {
             if (tcp.flags and IpStack.FLAG_SYN == 0) {
-                // nobody knows this flow, refuse it
+                // the flow is not known, so the packet is refused
                 emit(reset(src, dst, tcp))
                 return
             }
@@ -140,7 +140,7 @@ class TcpBridge(
         }
 
         if (tcp.flags and IpStack.FLAG_SYN != 0) {
-            // a retransmitted SYN, answer with the very same numbers
+            // a retransmitted SYN: answer with the same numbers
             sendSynAck(flow)
             return
         }

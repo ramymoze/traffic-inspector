@@ -208,7 +208,7 @@ object IpStack {
         header.put(0)
         header.putShort((20 + payloadLength).toShort())
         header.putShort(0) // the identification
-        header.putShort(0x4000) // don't fragment
+        header.putShort(0x4000) // the do-not-fragment flag
         header.put(64) // the time to live
         header.put(protocol.toByte())
         header.putShort(0) // the checksum, filled in below

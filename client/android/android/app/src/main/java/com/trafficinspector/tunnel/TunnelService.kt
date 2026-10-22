@@ -19,8 +19,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * The tunnel of the device.
  *
  * The service opens a TUN device, hands the packets of the kernel to the
- * bridge and writes the answers back.  Two threads are at work: one reads
- * the interface, the other waits for the answers of the server.
+ * bridge and writes the answers back.  Three threads are at work: one reads
+ * the interface, one waits for the answers of the server and one asks the
+ * server every ten seconds whether it is still there.
  */
 class TunnelService : VpnService() {
 
@@ -175,7 +176,7 @@ class TunnelService : VpnService() {
             return START_NOT_STICKY
         }
 
-        // since android 15 the builder is an inner class, it belongs to the
+        // since Android 15 the builder is an inner class: it belongs to the
         // service and has to be used from here
         val vpn = Builder()
             .setSession("Traffic Inspector")
@@ -311,7 +312,7 @@ class TunnelService : VpnService() {
                     if (last.isEmpty()) {
                         last = "nothing to read ($read)"
                     }
-                    // the interface is not blocking, wait a moment
+                    // the interface had nothing to give, wait a moment
                     try {
                         Thread.sleep(10)
                     } catch (ignored: InterruptedException) {
@@ -445,7 +446,7 @@ class TunnelService : VpnService() {
             .setOngoing(true)
             .build()
         if (android.os.Build.VERSION.SDK_INT >= 34) {
-            // from android 14 on the kind of the service has to be given
+            // since Android 14 the kind of the service has to be given
             startForeground(
                 NOTIFICATION_ID,
                 notification,

@@ -268,7 +268,7 @@ class TunnelClient(
                 socket.receive(packet)
             }
         } catch (ignored: Exception) {
-            // nothing left
+            // the buffer is empty now
         }
     }
 
@@ -417,8 +417,7 @@ class TunnelClient(
         val packet = DatagramPacket(ByteArray(65535), 65535)
         socket.soTimeout = timeoutMillis.toInt()
         try {
-            // the sdk says the answer of receive is empty, the number of the
-            // bytes is in the packet itself
+            // the sdk leaves the length of the datagram in the packet itself
             socket.receive(packet)
         } catch (ignored: java.net.SocketTimeoutException) {
             return null

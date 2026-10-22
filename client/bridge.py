@@ -135,7 +135,7 @@ class TcpBridge:
 
         if flow is None:
             if not tcp.flags & ipstack.FLAG_SYN:
-                # nobody knows this flow, refuse it
+                # the flow is not known, so the packet is refused
                 self._emit(self._reset(src, dst, tcp))
                 return
             flow = self._open_tcp(key, src, dst, tcp)
@@ -147,7 +147,7 @@ class TcpBridge:
             return
 
         if tcp.flags & ipstack.FLAG_SYN:
-            # a retransmitted SYN, answer with the very same numbers
+            # a retransmitted SYN: answer with the same numbers
             self._send_synack(flow)
             return
 

@@ -36,7 +36,7 @@ KNOWN_PORTS = {
     1080, 1433, 1434, 1521, 1723, 2049, 3128, 3306, 3389, 5000, 5432, 5900, 6379,
     8080, 8443, 8888, 9000, 9090, 27017, 28017,
     # what a phone really uses
-    1194, 19305, 19306, 19307, 19308, 19309,  # push of the play services
+    1194, 19305, 19306, 19307, 19308, 19309,  # the push of the play services
     3478, 3479, 3480, 3481,                   # stun and turn, for calls
     5222, 5223, 5228,                         # xmpp and the push of google
     5353, 5355,                               # the names in the local network

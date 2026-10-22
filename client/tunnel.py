@@ -2,8 +2,9 @@
 
 This module holds the part of the client that talks to the server: the
 handshake, the flow bookkeeping and the frame codec.  It is shared by the
-stub client (``testing.py``), by the SOCKS5 proxy (``client.socks``) and,
-later on, by the TUN based clients that will live in this package.
+stub client (``testing.py``), by the SOCKS5 proxy (``client.socks``) and by
+the TUN based clients (``client.main``), so the wire format only exists
+once.
 """
 
 import platform

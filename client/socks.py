@@ -1,9 +1,9 @@
 """A SOCKS5 proxy that sends everything through the tunnel.
 
-This is what makes a *real device* test possible before the TUN clients of
-phase 2 and 3 exist: run this on the device, point the browser (or any app
-that speaks SOCKS5) at ``127.0.0.1:1080`` and every request travels through
-the tunnel to the server, where the inspector records it.
+It is the easiest way to put a browser through the tunnel: run this on the
+machine that holds the browser, point it at ``127.0.0.1:1080`` and every
+request travels through the tunnel to the server, where the inspector
+records it.
 
     python -m client.socks --server 192.168.1.10 --port 5555
 

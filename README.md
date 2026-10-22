@@ -2,12 +2,21 @@
 
 A VPN server you run yourself, so you can see what a phone is really doing.
 
-The story this project comes from: a phone that was quietly sending a
-video of its owner somewhere, in the middle of the night, through a VPN
-app. You cannot see that from the phone. You can see it from the other
-side of the connection.
+This project comes from a story I read on LinkedIn. A woman noticed that
+her phone was always hot and that the battery was always dead, and she had
+no idea why. She told a friend about it. The friend had a VPN server of his
+own — running your own is common in Russia, he said — so he pointed her
+phone at it and read the logs.
 
-`traffic-inspector` is that other side. The phone sends all of its
+The logs showed her phone talking, in the middle of the night, to an address
+she had never heard of, and sending a lot of data. Somebody had got hold of
+that phone and was using its camera to film her.
+
+The phone showed a green shield and nothing else. Her internet provider saw
+encrypted traffic to a VPN server. The only place where the truth was
+visible was the tunnel itself — and her friend was the one holding it.
+
+**This project is that tool, made properly.** The phone sends all of its
 traffic to your own server, your server writes down what it sees — which
 destinations, which ports, how much, at what hour of the day — and then it
 *judges* the traffic and tells you what is worth a look.

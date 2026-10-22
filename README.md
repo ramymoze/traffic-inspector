@@ -29,6 +29,10 @@ Nothing leaves your machine: the server is plain Python, it needs no root,
 it changes no routes, it is not a router. It is a proxy that writes things
 down.
 
+The report, on the phone that asked for it:
+
+![the report on the phone](docs/app-report.png)
+
 ---
 
 ## What you need
@@ -60,7 +64,7 @@ It prints a card with everything the phone needs:
 ========================================================================
 
   csv file      : /home/you/traffic-inspector/traffic.csv
-  master key    : 1b4e6f9544237b199a73a96b7bb65def2be360a97f15dab950ad761bc27a6c66
+  master key    : 6f2a9c1d8b3e4f7a0c5d2e8b1a4f6c9d3e7b0a5c2f8d1e4b7a0c3f6d9e2b5a8c1
 
   the phone has to reach this machine:
     on the same wifi : 192.168.100.8:5555
@@ -291,8 +295,10 @@ traffic-inspector/
 │   ├── DEPLOY.md        how to put the server on the internet
 │   └── VM_SETUP.md      how to try the Linux client in a virtual machine
 ├── tests/
+├── docs/               the pictures of the readme
 ├── testing.py          a stub client, it fills the CSV with real rows
 ├── PROTOCOL.md         the wire format
+├── LICENSE
 └── README.md
 ```
 

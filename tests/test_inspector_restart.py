@@ -38,7 +38,7 @@ def test_the_rows_survive_a_restart_of_the_server(tmp_path):
     path = tmp_path / "traffic.csv"
 
     first = Inspector(path)
-    first.upsert(FakeFlow(flow_id=1, device="rmx3687"))
+    first.upsert(FakeFlow(flow_id=1, device="pixel8-android"))
     first.maybe_write(force=True)
 
 
@@ -46,10 +46,10 @@ def test_the_rows_survive_a_restart_of_the_server(tmp_path):
     second = Inspector(path)
     rows = second.rows()
     assert len(rows) == 1, "the rows of the first server were lost"
-    assert rows[0]["device"] == "rmx3687"
+    assert rows[0]["device"] == "pixel8-android"
 
     # and the new server adds its own rows
-    second.upsert(FakeFlow(flow_id=2, device="rmx3687"))
+    second.upsert(FakeFlow(flow_id=2, device="pixel8-android"))
     second.maybe_write(force=True)
 
 
@@ -64,11 +64,12 @@ def test_the_device_stays_known_after_a_restart(tmp_path):
 
     path = tmp_path / "traffic.csv"
     first = Inspector(path)
-    first.upsert(FakeFlow(flow_id=1, device="rmx3687", dst_ip="1.2.3.4"))
+    first.upsert(FakeFlow(flow_id=1, device="pixel8-android", dst_ip="1.2.3.4"))
     first.maybe_write(force=True)
 
 
     second = Inspector(path)
     rows = second.rows()
-    assert report_module.devices_of(rows) == {"rmx3687"}
+    assert report_module.devices_of(rows) == {"pixel8-android"}
+
 
